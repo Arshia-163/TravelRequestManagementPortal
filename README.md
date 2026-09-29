@@ -139,11 +139,7 @@ dotnet ef migrations add <MigrationName> --project TravelManagement.Data --start
 dotnet ef database update --project TravelManagement.Data --startup-project TravelRequestManagement
 ```
 
-## Security Notes
 
-- Do not commit real connection strings, passwords or secrets. Use user secrets or environment variables.
-- Change the seeded admin password before any real deployment.
-- Password policy: minimum 8 characters, unique email required.
 
 ## Contributing
 
