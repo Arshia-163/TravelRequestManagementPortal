@@ -1,0 +1,289 @@
+﻿@using TravelManagement.Services.Shared.DTOs
+@using TravelManagement.Services.Shared.Enums
+@inject ITravelApi Api
+@implements IDisposable
+
+<p class="message">@message</p>
+
+<div class="filters-bar">
+    <input type="search" value="@searchText" @oninput="OnSearchInput"
+           placeholder="Search by request no., employee, destination or department..."
+           aria-label="Search requests" />
+
+    <select aria-label="Filter by status" @bind="statusFilter" @bind:after="ApplyFilters">
+        <option value="">All statuses</option>
+        @foreach (var s in Statuses)
+        {
+            <option value="@s">@StatusText(s)</option>
+        }
+    </select>
+
+    <select aria-label="Filter by travel type" @bind="typeFilter" @bind:after="ApplyFilters">
+        <option value="">All travel types</option>
+        @foreach (var t in Enum.GetValues<TravelType>())
+        {
+            <option value="@t">@t</option>
+        }
+    </select>
+
+    @if (Departments.Count > 1)
+    {
+        <select aria-label="Filter by department" @bind="departmentFilter" @bind:after="ApplyFilters">
+            <option value="">All departments</option>
+            @foreach (var d in Departments)
+            {
+                <option value="@d.Id">@d.Name</option>
+            }
+        </select>
+    }
+
+    <select aria-label="Sort by" @bind="sortBy" @bind:after="ApplyFilters">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="employee">Employee (A-Z)</option>
+        <option value="destination">Destination (A-Z)</option>
+        <option value="startdate">Travel start date</option>
+        <option value="cost_high">Cost (high to low)</option>
+        <option value="cost_low">Cost (low to high)</option>
+        <option value="status">Status</option>
+    </select>
+
+    <select aria-label="Filter by decided by" @bind="decidedByFilter" @bind:after="ApplyFilters">
+        <option value="">Decided by anyone</option>
+        <option value="me">Decided by you</option>
+        <option value="previous">Decided by a previous @(IsHead ? "department head" : "manager")</option>
+    </select>
+
+    @if (HasActiveFilters)
+    {
+        <button type="button" @onclick="ClearFilters">Clear filters</button>
+    }
+</div>
+
+@if (result is null)
+{
+    <p class="empty">@(loading ? "Loading requests..." : "")</p>
+}
+else if (result.TotalCount == 0)
+{
+    <div class="empty-state">
+        <div class="empty-icon">🗂️</div>
+        <p>@(HasActiveFilters ? "No requests match the current search and filters." : IsHead ? "No requests have been escalated to you yet." : "No requests have come to you for approval yet.")</p>
+    </div>
+}
+else
+{
+    <div class="@(loading ? "table-scroll is-loading" : "table-scroll")">
+        <table>
+            <thead>
+                <tr>
+                    <th>Request</th>
+                    <th>Employee</th>
+                    <th>Department</th>
+                    <th>Destination</th>
+                    <th>Dates</th>
+                    <th>Cost</th>
+                    <th>Status</th>
+                    <th>Approved By</th>
+                    <th>Submitted</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in result.Items)
+                {
+                    <tr>
+                        <td>TR-@r.Id.ToString("D6")</td>
+                        <td>@r.EmployeeName</td>
+                        <td>@r.DepartmentName</td>
+                        <td>@r.Destination</td>
+                        <td>@r.StartDate.ToString("dd MMM yyyy") &ndash; @r.EndDate.ToString("dd MMM yyyy")</td>
+                        <td>@r.EstimatedCost.ToString("N2") @r.Currency</td>
+                        <td><span class="status @StatusClass(r.Status)">@StatusText(r.Status)</span></td>
+                        <td>
+                            @if (r.DecidedBy is null)
+                            {
+                                <span class="muted">&mdash;</span>
+                            }
+                            else
+                            {
+                                <span class="role-pill @(r.DecidedByCurrentUser ? "decision-you" : "decision-previous")" title="@DecisionTitle(r)">
+                                    @(r.DecidedApproved switch { true => "Approved", false => "Rejected", null => "Decided" }) by @(r.DecidedByCurrentUser ? "you" : r.DecidedBy)
+                                </span>
+                            }
+                        </td>
+                        <td>@r.CreatedAt.ToLocalTime().ToString("dd MMM yyyy")</td>
+                        <td><a class="table-link" href="/requests/@r.Id?role=@Role">View</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="pager">
+        <span class="pager-summary">Showing @FirstShown&ndash;@LastShown of @result.TotalCount</span>
+
+        <div class="pager-controls">
+            <button type="button" disabled="@(result.Page <= 1 || loading)" @onclick="() => GoTo(result.Page - 1)">&lsaquo; Prev</button>
+            @foreach (var p in PageNumbers)
+            {
+                var target = p;
+                <button type="button" class="@(target == result.Page ? "pager-current" : "")" aria-current="@(target == result.Page ? "page" : null)"
+                        disabled="@loading" @onclick="() => GoTo(target)">
+                    @target
+                </button>
+            }
+            <button type="button" disabled="@(result.Page >= result.TotalPages || loading)" @onclick="() => GoTo(result.Page + 1)">Next &rsaquo;</button>
+        </div>
+
+        <label class="pager-size">
+            Rows per page
+            <select @bind="pageSize" @bind:after="ApplyFilters">
+                <option value="10">10</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+            </select>
+        </label>
+    </div>
+}
+
+@code {
+   
+    [Parameter, EditorRequired] public string Role { get; set; } = "manager";
+
+    private bool IsHead => Role == "depthead";
+
+    private ApprovalRequestPage? result;
+    private bool loading = true;
+    private string message = "";
+
+    private string searchText = "";
+    private string statusFilter = "";
+    private string typeFilter = "";
+    private string departmentFilter = "";
+    private string sortBy = "newest";
+    private string decidedByFilter = "";
+    private int page = 1;
+    private int pageSize = 10;
+
+    private CancellationTokenSource? debounce;
+    private int loadCounter;
+
+  
+    private static IEnumerable<TravelRequestStatus> Statuses =>
+        Enum.GetValues<TravelRequestStatus>().Where(s => s != TravelRequestStatus.Draft);
+
+    private IReadOnlyList<DepartmentOptionDto> Departments => result?.Departments ?? [];
+
+    private bool HasActiveFilters =>
+        !string.IsNullOrWhiteSpace(searchText) || statusFilter != "" || typeFilter != ""
+        || departmentFilter != "" || sortBy != "newest" || decidedByFilter != "";
+
+    private int FirstShown => result is null || result.TotalCount == 0 ? 0 : (result.Page - 1) * result.PageSize + 1;
+    private int LastShown => result is null ? 0 : (result.Page - 1) * result.PageSize + result.Items.Count;
+
+ 
+    private IEnumerable<int> PageNumbers
+    {
+        get
+        {
+            if (result is null) return [];
+            var start = Math.Max(1, result.Page - 2);
+            var end = Math.Min(result.TotalPages, start + 4);
+            start = Math.Max(1, end - 4);
+            return Enumerable.Range(start, end - start + 1);
+        }
+    }
+
+    protected override Task OnInitializedAsync() => Load();
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        searchText = e.Value?.ToString() ?? "";
+        debounce?.Cancel();
+        debounce?.Dispose();
+        var cts = debounce = new CancellationTokenSource();
+        try { await Task.Delay(350, cts.Token); }
+        catch (TaskCanceledException) { return; }
+
+        page = 1;
+        await Load();
+    }
+
+    private Task ApplyFilters()
+    {
+        page = 1;
+        return Load();
+    }
+
+    private Task GoTo(int target)
+    {
+        if (result is null) return Task.CompletedTask;
+        page = Math.Clamp(target, 1, result.TotalPages);
+        return Load();
+    }
+
+    private Task ClearFilters()
+    {
+        searchText = ""; statusFilter = ""; typeFilter = ""; departmentFilter = ""; sortBy = "newest"; decidedByFilter = "";
+        page = 1;
+        return Load();
+    }
+
+    private async Task Load()
+    {
+        var ticket = ++loadCounter; 
+        loading = true;
+        message = "";
+
+        try
+        {
+            var query = new ApprovalRequestQuery
+            {
+                Search = searchText,
+                Status = Enum.TryParse<TravelRequestStatus>(statusFilter, out var status) ? status : null,
+                TravelType = Enum.TryParse<TravelType>(typeFilter, out var type) ? type : null,
+                DepartmentId = int.TryParse(departmentFilter, out var departmentId) ? departmentId : null,
+                SortBy = sortBy,
+                DecidedBy = string.IsNullOrWhiteSpace(decidedByFilter) ? null : decidedByFilter,
+                Page = page,
+                PageSize = pageSize
+            };
+
+            var response = IsHead ? await Api.HeadAllRequestsAsync(query) : await Api.ManagerAllRequestsAsync(query);
+            if (ticket != loadCounter) return;
+
+            result = response;
+            page = response.Page;
+        }
+        catch (Exception ex)
+        {
+            if (ticket == loadCounter) message = ApiErrors.Describe(ex);
+        }
+        finally
+        {
+            if (ticket == loadCounter) loading = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        debounce?.Cancel();
+        debounce?.Dispose();
+    }
+
+   
+    private string DecisionTitle(TravelRequestDto r) => r.DecidedByCurrentUser
+        ? "Decided by you"
+        : $"Decided by a previous {(IsHead ? "department head" : "manager")}: {r.DecidedBy}";
+
+    private static string StatusClass(TravelRequestStatus status) => $"status-{status.ToString().ToLowerInvariant()}";
+
+    private static string StatusText(TravelRequestStatus status) => status switch
+    {
+        TravelRequestStatus.PendingManager => "Pending manager",
+        TravelRequestStatus.PendingDeptHead => "Pending department head",
+        TravelRequestStatus.ExtensionRequested => "Extension requested",
+        _ => status.ToString()
+    };
+}

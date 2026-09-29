@@ -1,0 +1,91 @@
+﻿@inherits LayoutComponentBase
+@implements IDisposable
+@using TravelManagement.Services.Shared.Constants
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+<div class="travel-shell">
+    <header class="app-header">
+        <div class="app-header-inner">
+            <a class="brand" href="/" aria-label="TravelDesk home">
+                <span class="brand-mark" aria-hidden="true">✈</span>
+                <span><strong>TravelDesk</strong><small>Corporate travel</small></span>
+            </a>
+            @if (Auth.Me is not null)
+            {
+                <nav>
+                    <NavLink href="/dashboard">Travel Request</NavLink>
+                    @if (Auth.Me.ManagesDepartments)
+                    {
+                        <NavLink href="/manager">Manager</NavLink>
+                    }
+                    @if (Auth.Me.HeadsDepartments)
+                    {
+                        <NavLink href="/department-head">Department head</NavLink>
+                    }
+                    @if (Auth.Me.Roles.Contains(RoleNames.TravelAdmin))
+                    {
+                        <NavLink href="/admin">Administration</NavLink>
+                    }
+                    <NavLink href="/profile">Profile</NavLink>
+                    <form method="post" action="/auth/logout" class="sign-out-form" data-enhance="false">
+                        <input type="hidden" name="returnUrl" value="/login" />
+                        <button class="sign-out" type="submit">Sign out</button>
+                    </form>
+                </nav>
+            }
+        </div>
+    </header>
+    <main class="page-content">
+        <ErrorBoundary @ref="errorBoundary">
+            <ChildContent>
+                @Body
+            </ChildContent>
+            <ErrorContent Context="ex">
+                <div class="form-card" role="alert">
+                    <h3>Something went wrong</h3>
+                    <p class="field-hint">
+                        This page hit an unexpected problem and couldn't continue. Nothing you did caused this,
+                        and no changes were lost. You can try again, or head back and re-open what you were working on.
+                    </p>
+                    <div class="tabs">
+                        <button class="btn" @onclick="Retry">Try again</button>
+                        <a class="btn btn-secondary" href="/">Go to dashboard</a>
+                    </div>
+                </div>
+            </ErrorContent>
+        </ErrorBoundary>
+    </main>
+    <footer>© @DateTime.UtcNow.Year TravelDesk · Corporate travel management</footer>
+</div>
+
+@code {
+    private ErrorBoundary? errorBoundary;
+
+  
+    private void Retry() => errorBoundary?.Recover();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Auth.Changed += OnAuthChanged;
+        await Auth.EnsureLoadedAsync();
+        RedirectIfSignedOut();
+    }
+
+    protected override void OnParametersSet() => RedirectIfSignedOut();
+
+    private void RedirectIfSignedOut()
+    {
+        if (Auth.Me is not null) return;
+        var relative = Nav.ToBaseRelativePath(Nav.Uri);
+        var path = relative.Split('?')[0].TrimEnd('/');
+        if (!string.Equals(path, "login", StringComparison.OrdinalIgnoreCase))
+        {
+            Nav.NavigateTo($"/login?returnUrl={Uri.EscapeDataString("/" + relative)}");
+        }
+    }
+
+    private void OnAuthChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Auth.Changed -= OnAuthChanged;
+}

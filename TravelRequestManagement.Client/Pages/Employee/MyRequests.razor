@@ -1,0 +1,281 @@
+﻿@page "/"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using TravelManagement.Services.Shared.Constants
+@using TravelManagement.Services.Shared.DTOs
+@using TravelManagement.Services.Shared.Enums
+@inject ITravelApi Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+@inject DashboardNotifier Notifier
+
+<PageTitle>My Requests - Travel Request Management</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!CanCreateTravelRequests)
+{
+    <section><p>Your account has no Employee, Manager or Department Head role, so it cannot create travel requests. Ask your Travel Admin for access.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="EmployeeTabs.Items" />
+
+    <div class="section-title">
+        <div><h2>My requests</h2><p class="page-subtitle">Track drafts, approvals, bookings, and completed trips.</p></div>
+        <button class="btn" @onclick="OpenCreate">+ Create request</button>
+    </div>
+
+    <div class="filters-bar">
+        <input placeholder="Search request number or destination" @bind="searchDraft" @bind:event="oninput" @onkeydown="SearchOnEnter" />
+        <select @bind="statusDraft">
+            <option value="">All statuses</option>
+            @foreach (var status in Enum.GetValues<TravelRequestStatus>())
+            {
+                <option value="@status">@StatusText(status)</option>
+            }
+        </select>
+        <button @onclick="ApplyFilter">Filter</button>
+    </div>
+
+    <p class="message">@message</p>
+
+    @if (FilteredRequests.Count == 0)
+    {
+        <div class="empty-state">
+            <div class="empty-icon">🧳</div>
+            <p>@(requests.Count == 0 ? "You have not created any travel requests yet." : "No requests match your search.")</p>
+        </div>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Request</th>
+                    <th>Destination</th>
+                    <th>Travel Dates</th>
+                    <th>Cost</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in FilteredRequests)
+                {
+                    <tr>
+                        <td>TR-@item.CreatedAt.Year-@item.Id.ToString("D6")</td>
+                        <td>@item.Destination</td>
+                        <td>@item.StartDate.ToString("dd MMM yyyy") &ndash; @item.EndDate.ToString("dd MMM yyyy")</td>
+                        <td>@item.EstimatedCost</td>
+                        <td><span class="status @StatusClass(item.Status)">@StatusText(item.Status)</span></td>
+                        <td class="table-actions">
+                            <a class="table-link" href="/requests/@item.Id">View</a>
+                            @if (item.Status == TravelRequestStatus.Draft)
+                            {
+                                <button @onclick="(() => EditDraft(item.Id))">Edit</button>
+                                <button @onclick="(() => Submit(item.Id))">Submit</button>
+                            }
+                            @if (item.Status == TravelRequestStatus.Approved)
+                            {
+                                <button @onclick="(() => OpenExtension(item.Id))">Extend</button>
+                            }
+                            @if (item.Status is not TravelRequestStatus.Cancelled and not TravelRequestStatus.Rejected and not TravelRequestStatus.Completed)
+                            {
+                                <button @onclick="(() => OpenCancellation(item.Id))">Cancel</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@if (extensionRequestId is not null)
+{
+    <div class="dialog-backdrop">
+        <div class="dialog" role="dialog" aria-modal="true">
+            <div class="section-title"><h2>Request trip extension</h2><button class="dialog-close-btn" @onclick="(() => extensionRequestId = null)">&times;</button></div>
+            <div class="form-card">
+                <label>New end date <input type="date" min="@MinExtensionDate" @bind="extension.NewEndDate" /></label>
+                <label>Additional estimated cost <input type="number" min="0.01" step="0.01" @bind="extension.AdditionalEstimatedCost" /></label>
+                <label>Reason <textarea @bind="extension.Reason" placeholder="Explain why the trip needs to be extended"></textarea></label>
+                <p class="error">@extensionError</p>
+                <div class="tabs">
+                    <button class="btn btn-primary" @onclick="SubmitExtension">Request extension</button>
+                    <button @onclick="(() => extensionRequestId = null)">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+@if (cancellationRequestId is not null)
+{
+    <div class="dialog-backdrop">
+        <div class="dialog" role="dialog" aria-modal="true">
+            <div class="section-title"><h2>Cancel travel request</h2><button class="dialog-close-btn" @onclick="(() => cancellationRequestId = null)">&times;</button></div>
+            <div class="form-card">
+                <label>Reason <textarea @bind="cancellationReason" placeholder="Cancellation reason is required"></textarea></label>
+                <p class="error">@cancellationError</p>
+                <div class="tabs">
+                    <button class="btn btn-danger" @onclick="SubmitCancellation">Confirm cancellation</button>
+                    <button @onclick="(() => cancellationRequestId = null)">Keep request</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showNoDepartment)
+{
+    <div class="dialog-backdrop">
+        <div class="dialog" role="dialog" aria-modal="true">
+            <h2>Unable to Create Travel Request</h2>
+            <p>No department is assigned to your account.</p>
+            <p>Please contact the Travel Admin to have a department assigned before creating a travel request.</p>
+            <button class="btn btn-primary" @onclick="(() => showNoDepartment = false)">OK</button>
+        </div>
+    </div>
+}
+
+@code {
+    private string message = "";
+    private string cancellationReason = "";
+    private string extensionError = "";
+    private string cancellationError = "";
+    private int? extensionRequestId, cancellationRequestId;
+    private bool showNoDepartment;
+    private ExtensionInput extension = new();
+    private IReadOnlyList<TravelRequestDto> requests = [];
+
+   
+    private string searchDraft = "";
+    private string statusDraft = "";
+    private string appliedSearch = "";
+    private string appliedStatus = "";
+
+    private IReadOnlyList<TravelRequestDto> FilteredRequests => requests.Where(x =>
+        (string.IsNullOrWhiteSpace(appliedStatus) || x.Status.ToString() == appliedStatus) &&
+        (string.IsNullOrWhiteSpace(appliedSearch) ||
+            x.Destination.Contains(appliedSearch, StringComparison.OrdinalIgnoreCase) ||
+            $"TR-{x.CreatedAt.Year}-{x.Id:D6}".Contains(appliedSearch, StringComparison.OrdinalIgnoreCase)))
+        .ToList();
+
+    private void ApplyFilter() { appliedSearch = searchDraft; appliedStatus = statusDraft; }
+
+    private void SearchOnEnter(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") ApplyFilter();
+    }
+
+   
+    private string MinExtensionDate =>
+        requests.FirstOrDefault(x => x.Id == extensionRequestId)?.EndDate.AddDays(1).ToString("yyyy-MM-dd") ?? "";
+
+   
+    private bool CanCreateTravelRequests => Auth.Me?.Roles.Any(role =>
+        role is RoleNames.Employee or RoleNames.Manager or RoleNames.DepartmentHead) == true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Auth.EnsureLoadedAsync()) return;
+        await Load();
+    }
+
+    private async Task Load() => await Run(async () => requests = await Api.MyRequestsAsync());
+
+    private void OpenCreate()
+    {
+       
+        if (Auth.Me?.DepartmentId is null) { showNoDepartment = true; return; }
+        Nav.NavigateTo("/requests/new");
+    }
+
+    private Task EditDraft(int id) { Nav.NavigateTo($"/requests/{id}/edit"); return Task.CompletedTask; }
+
+    private Task Submit(int id) => Run(async () =>
+    {
+        var item = requests.FirstOrDefault(x => x.Id == id);
+        if (item is not null)
+        {
+            if (string.IsNullOrWhiteSpace(item.Destination) || string.IsNullOrWhiteSpace(item.BusinessJustification))
+            {
+                message = "Complete destination and business justification before submitting.";
+                return;
+            }
+            if (item.EndDate.Date < item.StartDate.Date) { message = "End date cannot be before start date."; return; }
+            if (item.EstimatedCost <= 0) { message = "Estimated cost must be greater than zero."; return; }
+        }
+        await Api.SubmitAsync(id);
+        await Load();
+        message = "Request submitted.";
+    });
+
+    private Task OpenCancellation(int id) { cancellationRequestId = id; cancellationReason = ""; cancellationError = ""; return Task.CompletedTask; }
+
+    private Task SubmitCancellation() => Run(async () =>
+    {
+        if (cancellationRequestId is null) return;
+        if (string.IsNullOrWhiteSpace(cancellationReason)) { cancellationError = "A cancellation reason is required."; return; }
+        await Api.CancelAsync(cancellationRequestId.Value, cancellationReason);
+        cancellationRequestId = null;
+        await Load();
+        message = "Request cancelled.";
+
+      
+        Notifier.NotifyTravelRequestsChanged();
+    }, ex => cancellationError = ex);
+
+    private Task OpenExtension(int id)
+    {
+        extensionRequestId = id;
+        var current = requests.FirstOrDefault(x => x.Id == id);
+        extension = new ExtensionInput { NewEndDate = current?.EndDate.AddDays(1) ?? DateTime.Today.AddDays(1) };
+        extensionError = "";
+        return Task.CompletedTask;
+    }
+
+    private Task SubmitExtension() => Run(async () =>
+    {
+        if (extensionRequestId is null) return;
+        var current = requests.FirstOrDefault(x => x.Id == extensionRequestId.Value);
+
+       
+        if (current is not null && extension.NewEndDate.Date <= current.EndDate.Date) { extensionError = "New end date must be after the current end date."; return; }
+        if (extension.AdditionalEstimatedCost <= 0) { extensionError = "Additional estimated cost must be greater than zero."; return; }
+        if (string.IsNullOrWhiteSpace(extension.Reason)) { extensionError = "A reason is required for the extension."; return; }
+
+        await Api.RequestExtensionAsync(extensionRequestId.Value, extension);
+        extensionRequestId = null;
+        await Load();
+        message = "Extension submitted for approval.";
+        Notifier.NotifyTravelRequestsChanged();
+    }, ex => extensionError = ex);
+
+    private async Task Run(Func<Task> action, Action<string>? onError = null)
+    {
+        try { message = ""; await action(); }
+        catch (Exception ex)
+        {
+            var text = CleanError(ex);
+            if (onError is not null) onError(text); else message = text;
+        }
+    }
+
+    private static string CleanError(Exception ex) => ApiErrors.Describe(ex);
+
+    private static string StatusClass(TravelRequestStatus status) =>
+        $"status-{status.ToString().ToLowerInvariant()}";
+
+    private static string StatusText(TravelRequestStatus status) => status switch
+    {
+        TravelRequestStatus.PendingManager => "Pending manager",
+        TravelRequestStatus.PendingDeptHead => "Pending department head",
+        TravelRequestStatus.ExtensionRequested => "Extension requested",
+        _ => status.ToString()
+    };
+}

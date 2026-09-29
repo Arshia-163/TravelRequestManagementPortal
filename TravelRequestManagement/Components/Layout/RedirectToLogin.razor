@@ -1,0 +1,28 @@
+﻿@* Used as the <NotAuthorized> content of AuthorizeRouteView in Routes.razor. Reached
+   whenever a route's @attribute [Authorize] fails — i.e. no signed-in user — using the
+   framework's own AuthenticationStateProvider (the Identity cookie on the server, and the
+   state AddAuthenticationStateSerialization/Deserialization flowed across once a page is
+   running on WebAssembly). Every protected page uses plain [Authorize] rather than a
+   Roles restriction, so this component only ever has to handle "not signed in" — each
+   page's own role/assignment-specific access message (e.g. "You do not have Travel Admin
+   access") is untouched and keeps deciding that on its own, exactly as before. Mirrors the
+   returnUrl behaviour AuthController already uses for the manual /auth/login form post, so
+   the experience matches whichever path a request came in through. *@
+@inject NavigationManager Navigation
+
+@code {
+    protected override void OnInitialized()
+    {
+        var relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+        var path = relative.Split('?')[0].TrimEnd('/');
+
+        var target = string.Equals(path, "login", StringComparison.OrdinalIgnoreCase)
+            ? "/login"
+            : $"/login?returnUrl={Uri.EscapeDataString("/" + relative)}";
+
+        // forceLoad: true — this can fire before the interactive runtime (server circuit
+        // or WebAssembly) has started, so it must be a real navigation the browser/server
+        // can act on immediately rather than a client-side-only route change.
+        Navigation.NavigateTo(target, forceLoad: true);
+    }
+}

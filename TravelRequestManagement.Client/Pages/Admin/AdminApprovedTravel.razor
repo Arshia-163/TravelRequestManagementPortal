@@ -1,0 +1,100 @@
+﻿@page "/admin/approved-travel"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using TravelManagement.Services.Shared.Constants
+@using TravelManagement.Services.Shared.DTOs
+@inject ITravelApi Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+<PageTitle>Approved Travel - Travel Admin</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.Roles.Contains(RoleNames.TravelAdmin))
+{
+    <section><p>You do not have Travel Admin access.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="AdminTabs.Items" />
+
+    <section>
+        <div class="section-title">
+            <div><h2>Approved travel ready for booking</h2><p class="page-subtitle">Record a booking reference once travel arrangements are confirmed.</p></div>
+        </div>
+        <p class="message">@message</p>
+        <div class="filters-bar">
+            <select @bind="sortBy" @bind:after="ResetPage">
+                <option value="">Recently updated</option>
+                <option value="start">Travel start date (soonest)</option>
+                <option value="employee">Employee (A-Z)</option>
+                <option value="destination">Destination (A-Z)</option>
+                <option value="cost">Cost (high to low)</option>
+            </select>
+            @if (!string.IsNullOrEmpty(sortBy))
+            {
+                <button @onclick="ClearSort">Clear sort</button>
+            }
+        </div>
+        <RequestTable Items="PagedItems" OnBook="OpenBooking" AdminView="true" />
+        @if (approvedForBooking.Count > 0)
+        {
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem; margin-top:1rem;">
+                <span style="color:var(--muted);">Showing @((SafePage - 1) * PageSize + 1)–@Math.Min(SafePage * PageSize, approvedForBooking.Count) of @approvedForBooking.Count requests</span>
+                <div style="display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">
+                    <button disabled="@(SafePage == 1)" @onclick="(() => GoToPage(1))">First</button>
+                    <button disabled="@(SafePage == 1)" @onclick="(() => GoToPage(SafePage - 1))">Previous</button>
+                    <span>Page @SafePage of @TotalPages</span>
+                    <button disabled="@(SafePage == TotalPages)" @onclick="(() => GoToPage(SafePage + 1))">Next</button>
+                    <button disabled="@(SafePage == TotalPages)" @onclick="(() => GoToPage(TotalPages))">Last</button>
+                </div>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    private string message = "";
+    private IReadOnlyList<TravelRequestDto> approvedForBooking = [];
+
+    private string sortBy = "";
+    private const int PageSize = 15;
+    private int currentPage = 1;
+
+    private IReadOnlyList<TravelRequestDto> SortedItems => (sortBy switch
+    {
+        "start" => approvedForBooking.OrderBy(r => r.StartDate),
+        "employee" => approvedForBooking.OrderBy(r => r.EmployeeName, StringComparer.OrdinalIgnoreCase),
+        "destination" => approvedForBooking.OrderBy(r => r.Destination, StringComparer.OrdinalIgnoreCase),
+        "cost" => approvedForBooking.OrderByDescending(r => r.EstimatedCost),
+        _ => approvedForBooking.AsEnumerable()
+    }).ToList();
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(approvedForBooking.Count / (double)PageSize));
+    private int SafePage => Math.Min(Math.Max(currentPage, 1), TotalPages);
+    private IReadOnlyList<TravelRequestDto> PagedItems => SortedItems.Skip((SafePage - 1) * PageSize).Take(PageSize).ToList();
+    private void GoToPage(int page) => currentPage = Math.Clamp(page, 1, TotalPages);
+    private void ResetPage() => currentPage = 1;
+    private void ClearSort() { sortBy = ""; currentPage = 1; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Auth.EnsureLoadedAsync()) return;
+        await Load();
+    }
+
+    private Task Load() => Run(async () => approvedForBooking = await Api.ApprovedForBookingAsync());
+
+    
+    private Task OpenBooking(int id) { Nav.NavigateTo($"/admin/approved-travel/{id}/bookings"); return Task.CompletedTask; }
+
+    private async Task Run(Func<Task> action)
+    {
+        try { message = ""; await action(); }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+}

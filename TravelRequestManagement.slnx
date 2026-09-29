@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="TravelManagement.Data/TravelManagement.Data.csproj" />
+  <Project Path="TravelManagement.Services.Shared/TravelManagement.Services.Shared.csproj" />
+  <Project Path="TravelMangement.Services/TravelMangement.Services.csproj" />
+  <Project Path="TravelRequestManagement.Client/TravelRequestManagement.Client.csproj" />
+  <Project Path="TravelRequestManagement/TravelRequestManagement.csproj" />
+</Solution>

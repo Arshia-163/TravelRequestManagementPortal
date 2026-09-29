@@ -1,0 +1,11 @@
+
+<nav class="area-tabs">
+    @foreach (var tab in Tabs)
+    {
+        <NavLink href="@tab.Href" Match="NavLinkMatch.All">@tab.Text</NavLink>
+    }
+</nav>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<(string Text, string Href)> Tabs { get; set; } = [];
+}

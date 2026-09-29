@@ -1,0 +1,24 @@
+﻿@page "/profile"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+<PageTitle>Profile - TravelDesk</PageTitle>
+
+@if (Auth.Me is null) { <p>Loading...</p> }
+else
+{
+    <div class="profile-page">
+        <h1>My profile</h1>
+        @if (new Uri(Nav.Uri).Query.Contains("passwordChanged=1")) { <div class="success-banner">Your password was updated successfully.</div> }
+        <section class="profile-detail-card">
+            <div class="profile-header"><div class="profile-avatar">@Initials</div><div><h2>@Auth.Me.Name</h2><p>@string.Join(" · ", Auth.Me.Roles)@(Auth.Me.DepartmentName is null ? "" : $" · {Auth.Me.DepartmentName}")</p></div><span class="status-pill status-active">Active</span></div>
+            <a class="btn btn-secondary" href="/profile/change-password">Change password</a>
+            <dl class="detail-list profile-list"><dt>Department</dt><dd>@(Auth.Me.DepartmentName ?? "Unassigned")</dd><dt>Roles</dt><dd>@string.Join(", ", Auth.Me.Roles)</dd><dt>Manages departments</dt><dd>@(Auth.Me.ManagesDepartments ? "Yes" : "No")</dd><dt>Heads departments</dt><dd>@(Auth.Me.HeadsDepartments ? "Yes" : "No")</dd></dl>
+        </section>
+    </div>
+}
+
+@code { private string Initials => string.Concat((Auth.Me?.Name ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(x => char.ToUpperInvariant(x[0]))); }

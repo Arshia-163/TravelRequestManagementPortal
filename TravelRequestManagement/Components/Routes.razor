@@ -1,0 +1,17 @@
+﻿<Router AppAssembly="typeof(Program).Assembly" AdditionalAssemblies="new[] { typeof(Client._Imports).Assembly }" NotFoundPage="typeof(Pages.NotFound)">
+    <Found Context="routeData">
+        @* AuthorizeRouteView enforces each page's @attribute [Authorize(...)] using the
+           framework's built-in AuthenticationStateProvider — on the server that's the
+           Identity cookie directly; once a page runs on WebAssembly it's the state
+           AddAuthenticationStateSerialization/AddAuthenticationStateDeserialization
+           flowed across. This is purely an additional, framework-level gate: the existing
+           AuthState/api-me driven UI (nav links, TravelLayout's own redirect) is untouched
+           and keeps working exactly as it did before. *@
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+            <NotAuthorized>
+                <RedirectToLogin />
+            </NotAuthorized>
+        </AuthorizeRouteView>
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+</Router>

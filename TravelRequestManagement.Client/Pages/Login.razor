@@ -1,0 +1,52 @@
+﻿@page "/login"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@inject NavigationManager Nav
+
+<PageTitle>Sign in - Travel Request Management</PageTitle>
+
+<div class="login-page">
+    <section class="login-card" aria-labelledby="sign-in-title">
+        <div class="login-intro">
+            <span class="brand-mark" aria-hidden="true">✈</span>
+            <h1>TravelDesk</h1>
+            <p>One place to request, approve, and track corporate travel from submission to booking.</p>
+            <p class="muted">Requests are routed to your department's authorised approvers automatically.</p>
+        </div>
+        <div class="login-form">
+            <h2 id="sign-in-title">Welcome back</h2>
+            <p>Sign in to manage your corporate travel.</p>
+            <form action="/auth/login" method="post" data-enhance="false">
+                <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+                <label>
+                    Email
+                    <input name="email" type="email" placeholder="name@company.com" required autofocus autocomplete="email" />
+                </label>
+                <label>
+                    Password
+                    <input name="password" type="password" placeholder="Password" required autocomplete="current-password" />
+                </label>
+                <button class="primary-button" type="submit">Sign in</button>
+            </form>
+            @if (LoginFailed)
+            {
+                <p class="error" role="alert">Invalid email or password. Please try again.</p>
+            }
+            else if (AccountLocked)
+            {
+                <p class="error" role="alert">This account has been deactivated. Contact your Travel Admin.</p>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "loginError")]
+    public string? LoginError { get; set; }
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    public string? ReturnUrl { get; set; }
+
+    private bool LoginFailed => LoginError == "1";
+    private bool AccountLocked => LoginError == "locked";
+}

@@ -1,0 +1,43 @@
+﻿@page "/admin/departments/{Id:int}"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using TravelManagement.Services.Shared.Constants
+@using TravelManagement.Services.Shared.DTOs
+@inject ITravelApi Api
+@inject AuthState Auth
+
+<PageTitle>Department Details - Travel Admin</PageTitle>
+
+@if (Auth.Me is null) { <p>Loading...</p> }
+else if (!Auth.Me.Roles.Contains(RoleNames.TravelAdmin)) { <section><p>You do not have Travel Admin access.</p></section> }
+else if (department is null) { <section><p class="error">@message</p><a class="btn btn-secondary" href="/admin/departments">Back to departments</a></section> }
+else
+{
+    <AreaTabs Tabs="AdminTabs.Items" />
+    <div class="detail-page">
+        <div class="detail-heading"><div><p class="request-number">DEPARTMENT</p><h1>@department.Name</h1><p class="page-subtitle">Department profile and assigned team members.</p></div><a class="btn btn-secondary" href="/admin/departments">Back to departments</a></div>
+        <div class="request-detail-grid"><div>
+            <section class="detail-card"><h2>Department information</h2><dl class="detail-list"><dt>Approval limit</dt><dd>@department.TravelApprovalLimit.ToString("N2")</dd><dt>Manager</dt><dd>@UserName(department.ManagerId)</dd><dt>Department head</dt><dd>@UserName(department.DepartmentHeadId)</dd><dt>Team members</dt><dd>@Members.Count</dd></dl></section>
+            <section class="detail-card"><h2>Employees</h2>
+            @if (Members.Count == 0) { <p class="empty">No employees belong to this department yet.</p> }
+            else { <table><thead><tr><th>Employee ID</th><th>Name</th><th>Email</th><th>Roles</th><th>Status</th></tr></thead><tbody>@foreach (var user in Members) { <tr><td>@(user.EmployeeCode ?? "—")</td><td>@user.Name</td><td>@user.Email</td><td>@foreach (var role in user.Roles) { <span class="role-pill">@role</span> }</td><td><span class="status-pill @(user.IsActive ? "status-active" : "status-inactive")">@(user.IsActive ? "Active" : "Inactive")</span></td></tr> }</tbody></table> }
+            </section>
+        </div></div>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    private DepartmentDto? department;
+    private IReadOnlyList<UserDto> users = [];
+    private string message = "Loading department...";
+    private IReadOnlyList<UserDto> Members => users.Where(x => x.DepartmentId == Id).OrderBy(x => x.Name).ToList();
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!await Auth.EnsureLoadedAsync()) return;
+        try { users = await Api.UsersAsync(); department = (await Api.DepartmentsAsync()).FirstOrDefault(x => x.Id == Id); message = department is null ? "Department was not found." : ""; }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+    private string UserName(int? id) => users.FirstOrDefault(x => x.Id == id)?.Name ?? "Unassigned";
+}

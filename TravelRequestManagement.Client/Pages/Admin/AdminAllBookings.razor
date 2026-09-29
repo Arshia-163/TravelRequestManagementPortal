@@ -1,0 +1,146 @@
+﻿@page "/admin/bookings"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using TravelManagement.Services.Shared.Constants
+@using TravelManagement.Services.Shared.DTOs
+@using TravelManagement.Services.Shared.Enums
+@inject ITravelApi Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+<PageTitle>Bookings - Travel Admin</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.Roles.Contains(RoleNames.TravelAdmin))
+{
+    <section><p>You do not have Travel Admin access.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="AdminTabs.Items" />
+
+    <section>
+        <div class="section-title">
+            <div><h2>Bookings</h2><p class="page-subtitle">Every flight, hotel and other booking recorded so far, across all travel requests.</p></div>
+        </div>
+        <p class="message">@message</p>
+
+        <div class="filters-bar">
+            <input @bind="searchText" @bind:event="oninput" placeholder="Search by employee, destination, provider or reference..." />
+            <select @bind="typeFilter">
+                <option value="">All types</option>
+                @foreach (var t in Enum.GetValues<BookingType>()) { <option value="@t">@t</option> }
+            </select>
+            <select @bind="statusFilter">
+                <option value="">All statuses</option>
+                @foreach (var s in Enum.GetValues<BookingStatus>()) { <option value="@s">@s</option> }
+            </select>
+            <select @bind="departmentFilter">
+                <option value="">All departments</option>
+                @foreach (var d in DepartmentNames) { <option value="@d">@d</option> }
+            </select>
+            @if (!string.IsNullOrWhiteSpace(searchText) || !string.IsNullOrEmpty(typeFilter) || !string.IsNullOrEmpty(statusFilter) || !string.IsNullOrEmpty(departmentFilter))
+            {
+                <button @onclick="ClearFilters">Clear filters</button>
+            }
+        </div>
+
+        @if (FilteredBookings.Count == 0)
+        {
+            <p class="empty">@(bookings.Count == 0 ? "No bookings recorded yet." : "No bookings match the current filters.")</p>
+        }
+        else
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th>Request</th>
+                        <th>Employee</th>
+                        <th>Department</th>
+                        <th>Destination</th>
+                        <th>Type</th>
+                        <th>Provider</th>
+                        <th>Reference</th>
+                        <th>Actual cost</th>
+                        <th>Status</th>
+                        <th>Booked by</th>
+                        <th>Booked on</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var b in FilteredBookings)
+                    {
+                        <tr>
+                            <td>TR-@b.TravelRequestId.ToString("D6")</td>
+                            <td>@b.EmployeeName</td>
+                            <td>@b.DepartmentName</td>
+                            <td>@b.Destination</td>
+                            <td>@b.Type</td>
+                            <td>@b.Provider</td>
+                            <td>@b.BookingReference</td>
+                            <td>@b.ActualCost</td>
+                            <td><span class="status @BookingStatusClass(b.Status)">@b.Status</span></td>
+                            <td>@b.BookedByName</td>
+                            <td>@b.BookingDate.ToLocalTime().ToString("dd MMM yyyy")</td>
+                            <td><a class="table-link" href="@ManageHref(b.TravelRequestId)">Manage</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private string message = "";
+    private IReadOnlyList<AdminBookingDto> bookings = [];
+    private string searchText = "";
+    private string typeFilter = "";
+    private string statusFilter = "";
+    private string departmentFilter = "";
+
+    private IReadOnlyList<string> DepartmentNames =>
+        bookings.Select(b => b.DepartmentName).Distinct().OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+
+   
+    private IReadOnlyList<AdminBookingDto> FilteredBookings => bookings.Where(b =>
+            (string.IsNullOrWhiteSpace(searchText)
+                || b.EmployeeName.Contains(searchText, StringComparison.OrdinalIgnoreCase)
+                || b.Destination.Contains(searchText, StringComparison.OrdinalIgnoreCase)
+                || b.Provider.Contains(searchText, StringComparison.OrdinalIgnoreCase)
+                || b.BookingReference.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+            && (string.IsNullOrEmpty(typeFilter) || b.Type.ToString() == typeFilter)
+            && (string.IsNullOrEmpty(statusFilter) || b.Status.ToString() == statusFilter)
+            && (string.IsNullOrEmpty(departmentFilter) || b.DepartmentName == departmentFilter))
+        .ToList();
+
+    private void ClearFilters() { searchText = ""; typeFilter = ""; statusFilter = ""; departmentFilter = ""; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Auth.EnsureLoadedAsync()) return;
+        await Load();
+    }
+
+    private Task Load() => Run(async () => bookings = await Api.AllBookingsAsync());
+
+    private static string ManageHref(int requestId) => $"/admin/approved-travel/{requestId}/bookings";
+
+    private static string BookingStatusClass(BookingStatus status) => status switch
+    {
+        BookingStatus.Confirmed => "status-approved",
+        BookingStatus.Cancelled => "status-cancelled",
+        _ => "status-pendingmanager"
+    };
+
+    private async Task Run(Func<Task> action)
+    {
+        try { message = ""; await action(); }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+}

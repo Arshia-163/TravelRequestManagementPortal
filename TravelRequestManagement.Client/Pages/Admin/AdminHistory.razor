@@ -1,0 +1,75 @@
+﻿@page "/admin/history"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using TravelManagement.Services.Shared.Constants
+@using TravelManagement.Services.Shared.DTOs
+@using TravelManagement.Services.Shared.Enums
+@inject AuthState Auth
+@inject ITravelApi Api
+
+<PageTitle>History - Travel Admin</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.Roles.Contains(RoleNames.TravelAdmin))
+{
+    <section><p>You do not have Travel Admin access.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="AdminTabs.Items" />
+
+    <section>
+        <div class="section-title">
+            <div><h2>History</h2><p class="page-subtitle">Look up the complete audit trail for a specific travel request.</p></div>
+            <a class="btn" href="/admin/history/all">See all history</a>
+        </div>
+        <div class="history-search">
+            <label for="request-number">Request number</label>
+            <div><input id="request-number" type="number" min="1" @bind="requestNumber" placeholder="e.g. 12" @onkeydown="SearchOnEnter" /><button class="btn" @onclick="Search">Find history</button></div>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(message)) { <p class="error">@message</p> }
+        @if (request is not null)
+        {
+            <div class="history-result">
+                <div><p class="request-number">TR-@request.Id.ToString("D6")</p><h3>@request.Destination</h3><p class="muted">@request.EmployeeName · @request.DepartmentName · @request.StartDate.ToString("dd MMM yyyy") – @request.EndDate.ToString("dd MMM yyyy")</p></div>
+                <span class="status @StatusClass(request.Status)">@StatusText(request.Status)</span>
+            </div>
+            <ol class="timeline">@foreach (var item in request.History) { <li><strong>@ActionText(item.Action)</strong><span>@item.PerformedBy · @item.Timestamp.ToLocalTime().ToString("dd MMM yyyy, HH:mm")</span>@if (!string.IsNullOrWhiteSpace(item.Comment)) { <p>@item.Comment</p> }</li> }</ol>
+        }
+    </section>
+}
+
+@code {
+    [SupplyParameterFromQuery]
+    public int? requestNumber { get; set; }
+
+    private TravelRequestDto? request;
+    private string message = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.EnsureLoadedAsync();
+
+       
+        if (requestNumber is > 0)
+        {
+            await Search();
+        }
+    }
+    private async Task Search()
+    {
+        request = null; message = "";
+        if (requestNumber is null || requestNumber.Value < 1) { message = "Enter a valid request number."; return; }
+        var id = requestNumber.Value;
+        try { request = await Api.AdminRequestHistoryAsync(id); }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+    private async Task SearchOnEnter(KeyboardEventArgs e) { if (e.Key == "Enter") await Search(); }
+    private static string StatusClass(TravelRequestStatus status) => $"status-{status.ToString().ToLowerInvariant()}";
+    private static string StatusText(TravelRequestStatus status) => status switch { TravelRequestStatus.PendingManager => "Pending manager", TravelRequestStatus.PendingDeptHead => "Pending department head", _ => status.ToString() };
+    private static string ActionText(AuditActionType action) => System.Text.RegularExpressions.Regex.Replace(action.ToString(), "([a-z])([A-Z])", "$1 $2");
+}

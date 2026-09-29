@@ -1,0 +1,19 @@
+.form-card-wide {
+    max-width: 100%;
+}
+
+.form-card-wide .form-grid {
+    grid-template-columns: repeat(3, minmax(220px, 1fr));
+}
+
+@media (max-width: 900px) {
+    .form-card-wide .form-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 650px) {
+    .form-card-wide .form-grid {
+        grid-template-columns: 1fr;
+    }
+}

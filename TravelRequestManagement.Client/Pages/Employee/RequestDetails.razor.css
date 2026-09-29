@@ -1,0 +1,8 @@
+.cost-summary-total strong {
+    color: var(--gold-dark);
+    font-size: 1.25rem;
+}
+
+.table-scroll {
+    overflow-x: auto;
+}

@@ -1,0 +1,416 @@
+﻿@page "/requests/new"
+@page "/requests/{Id:int}/edit"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using System.Linq
+@using TravelManagement.Services.Shared.Constants
+@using TravelManagement.Services.Shared.DTOs
+@using TravelManagement.Services.Shared.Enums
+@inject ITravelApi Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+<PageTitle>@(Id is null ? "Create" : "Edit") Travel Request</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!CanCreateTravelRequests)
+{
+    <section><p>Your account has no Employee, Manager or Department Head role, so it cannot create travel requests. Ask your Travel Admin for access.</p></section>
+}
+else if (Auth.Me?.DepartmentId is null)
+{
+    
+    <div class="dialog-backdrop">
+        <div class="dialog" role="dialog" aria-modal="true">
+            <h2>Unable to Create Travel Request</h2>
+            <p>No department is assigned to your account.</p>
+            <p>Please contact the Travel Admin to have a department assigned before creating a travel request.</p>
+            <button class="btn btn-primary" @onclick="BackToMyRequests">OK</button>
+        </div>
+    </div>
+}
+else
+{
+    <AreaTabs Tabs="EmployeeTabs.Items" />
+
+    <div class="request-form-page">
+        <h1>@(Id is null ? "Create travel request" : "Edit travel request")</h1>
+        <p class="page-subtitle">Save a draft at any time; submit when all required information is ready.</p>
+        <section class="request-form-card">
+            <h2>Travel details</h2>
+            <p class="field-hint">Your department: <strong>@(Auth.Me?.DepartmentName ?? "Unassigned")</strong></p>
+            <div class="form-grid request-form-grid">
+                <label>
+                    Travel type
+                    <select @bind="draft.TravelType" @bind:after="OnTravelTypeChanged">
+                        <option value="@TravelType.Domestic">Domestic</option>
+                        <option value="@TravelType.International">International</option>
+                    </select>
+                </label>
+                <label class="autocomplete-wrap" @onfocusout="OnSourceBlur">
+                    Source destination
+                    <input value="@draft.Source"
+                           @oninput="OnSourceInput"
+                           placeholder="@(draft.TravelType == TravelType.International ? "e.g. Dubai, UAE" : "e.g. Delhi, India")"
+                           autocomplete="off" />
+                    @if (sourceFocused && filteredSourceCities.Count > 0)
+                    {
+                        <ul class="autocomplete-list">
+                            @foreach (var city in filteredSourceCities)
+                            {
+                                <li @onmousedown:preventDefault="true" @onmousedown="() => SelectSourceCity(city)">@city</li>
+                            }
+                        </ul>
+                    }
+                </label>
+                <label class="autocomplete-wrap" @onfocusout="OnDestinationBlur">
+                    End destination
+                    <input value="@draft.Destination"
+                           @oninput="OnDestinationInput"
+                           placeholder="@(draft.TravelType == TravelType.International ? "e.g. Dubai, UAE" : "e.g. Delhi, India")"
+                           autocomplete="off" />
+                    @if (destinationFocused && filteredCities.Count > 0)
+                    {
+                        <ul class="autocomplete-list">
+                            @foreach (var city in filteredCities)
+                            {
+                                <li @onmousedown:preventDefault="true" @onmousedown="() => SelectCity(city)">@city</li>
+                            }
+                        </ul>
+                    }
+                </label>
+                <label>Start date<input type="date" min="@TodayValue" @bind="draft.StartDate" @bind:after="ValidateDatesField" /></label>
+                <label>End date<input type="date" min="@MinEndDate" @bind="draft.EndDate" @bind:after="ValidateDatesField" /></label>
+                <label>Estimated cost<input type="number" min="0" step="0.01" @bind="draft.EstimatedCost" /></label>
+                <label class="form-grid-span">Business justification<textarea @bind="draft.BusinessJustification" placeholder="Explain why this business travel is required."></textarea></label>
+            </div>
+            @if (!string.IsNullOrEmpty(dateError))
+            {
+                <p class="error">@dateError</p>
+            }
+        </section>
+        <section class="request-form-card">
+            <h2>Accommodation</h2>
+            <div class="form-grid request-form-grid">
+                <label class="form-grid-span">
+                    <input type="checkbox" @bind="draft.AccommodationRequired" @bind:after="OnAccommodationRequiredChanged" />
+                    Accommodation Required
+                </label>
+                <label>Hotel Name<input @bind="draft.HotelName" @bind:after="ValidateAccommodationField" placeholder="e.g. Taj Palace" /></label>
+                <label>Hotel City<input @bind="draft.HotelCity" @bind:after="ValidateAccommodationField" placeholder="e.g. Mumbai, India" /></label>
+                <label>Check-in Date<input type="date" min="@MinCheckInDate" max="@MaxAccommodationDate" @bind="draft.CheckInDate" @bind:after="ValidateAccommodationField" /></label>
+                <label>Check-out Date<input type="date" min="@MinCheckOutDate" max="@MaxAccommodationDate" @bind="draft.CheckOutDate" @bind:after="ValidateAccommodationField" /></label>
+            </div>
+            @if (!string.IsNullOrEmpty(accommodationError))
+            {
+                <p class="error">@accommodationError</p>
+            }
+        </section>
+        <div class="tabs"><button class="btn" @onclick="SaveDraft">@(Id is null ? "Save draft" : "Save changes")</button><button class="btn btn-secondary" @onclick="SubmitRequest">Submit request</button><button @onclick="BackToMyRequests">Back to My Requests</button></div>
+        <p class="error">@message</p>
+    </div>
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private string message = "";
+    private TravelRequestInput draft = new();
+
+    private bool destinationFocused;
+    private List<string> filteredCities = new();
+
+    private bool sourceFocused;
+    private List<string> filteredSourceCities = new();
+
+    private string accommodationError = "";
+
+    
+    private IReadOnlyList<TravelRequestDto> existingRequests = new List<TravelRequestDto>();
+    private string dateError = "";
+
+    private static readonly string[] DomesticCities =
+    {
+        "Delhi, India", "Mumbai, India", "Bengaluru, India", "Hyderabad, India", "Chennai, India",
+        "Kolkata, India", "Pune, India", "Ahmedabad, India", "Jaipur, India", "Lucknow, India",
+        "Chandigarh, India", "Kochi, India", "Goa, India", "Indore, India", "Nagpur, India",
+        "Surat, India", "Bhopal, India", "Coimbatore, India", "Visakhapatnam, India", "Guwahati, India"
+    };
+
+    private static readonly string[] InternationalCities =
+    {
+        "New York, USA", "London, UK", "Dubai, UAE", "Singapore", "Tokyo, Japan",
+        "Paris, France", "Frankfurt, Germany", "Hong Kong", "Sydney, Australia", "Toronto, Canada",
+        "San Francisco, USA", "Amsterdam, Netherlands", "Zurich, Switzerland", "Bangkok, Thailand",
+        "Kuala Lumpur, Malaysia", "Shanghai, China", "Seoul, South Korea", "Chicago, USA",
+        "Los Angeles, USA", "Riyadh, Saudi Arabia"
+    };
+
+   
+    private static string TodayValue => DateTime.Today.ToString("yyyy-MM-dd");
+
+    private string MinEndDate => draft.StartDate == default
+        ? TodayValue
+        : (draft.StartDate.Date < DateTime.Today ? TodayValue : draft.StartDate.ToString("yyyy-MM-dd"));
+
+    private string MinCheckInDate => draft.StartDate == default ? "" : draft.StartDate.ToString("yyyy-MM-dd");
+    private string MaxAccommodationDate => draft.EndDate == default ? "" : draft.EndDate.ToString("yyyy-MM-dd");
+    private string MinCheckOutDate => draft.CheckInDate is null ? MinCheckInDate : draft.CheckInDate.Value.ToString("yyyy-MM-dd");
+
+    private void OnTravelTypeChanged()
+    {
+        
+        RefreshFilteredCities(draft.Destination);
+        RefreshFilteredSourceCities(draft.Source);
+    }
+
+    private void OnDestinationInput(ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString() ?? "";
+        draft.Destination = text;
+        destinationFocused = true;
+        RefreshFilteredCities(text);
+    }
+
+    private void RefreshFilteredCities(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            filteredCities = new List<string>();
+            return;
+        }
+
+        var pool = draft.TravelType == TravelType.International ? InternationalCities : DomesticCities;
+        filteredCities = pool
+            .Where(city => city.Contains(text, StringComparison.OrdinalIgnoreCase))
+            .Take(8)
+            .ToList();
+    }
+
+    private void SelectCity(string city)
+    {
+        draft.Destination = city;
+        filteredCities = new List<string>();
+        destinationFocused = false;
+    }
+
+    private void OnDestinationBlur()
+    {
+        destinationFocused = false;
+    }
+
+    private void OnSourceInput(ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString() ?? "";
+        draft.Source = text;
+        sourceFocused = true;
+        RefreshFilteredSourceCities(text);
+    }
+
+    private void RefreshFilteredSourceCities(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            filteredSourceCities = new List<string>();
+            return;
+        }
+
+        var pool = draft.TravelType == TravelType.International ? InternationalCities : DomesticCities;
+        filteredSourceCities = pool
+            .Where(city => city.Contains(text, StringComparison.OrdinalIgnoreCase))
+            .Take(8)
+            .ToList();
+    }
+
+    private void SelectSourceCity(string city)
+    {
+        draft.Source = city;
+        filteredSourceCities = new List<string>();
+        sourceFocused = false;
+    }
+
+    private void OnSourceBlur()
+    {
+        sourceFocused = false;
+    }
+
+    private void OnAccommodationRequiredChanged()
+    {
+       
+        ValidateAccommodation();
+    }
+
+    
+    private void ValidateAccommodationField() => ValidateAccommodation();
+
+    
+    private bool ValidateAccommodation()
+    {
+        var hasAnyHotelDetail = !string.IsNullOrWhiteSpace(draft.HotelName) ||
+                                 !string.IsNullOrWhiteSpace(draft.HotelCity) ||
+                                 draft.CheckInDate is not null ||
+                                 draft.CheckOutDate is not null;
+
+        if (!draft.AccommodationRequired)
+        {
+            accommodationError = hasAnyHotelDetail
+                ? "Please check \"Accommodation Required\" before entering hotel details."
+                : "";
+            return string.IsNullOrEmpty(accommodationError);
+        }
+
+        if (string.IsNullOrWhiteSpace(draft.HotelName) || string.IsNullOrWhiteSpace(draft.HotelCity) ||
+            draft.CheckInDate is null || draft.CheckOutDate is null)
+        {
+            accommodationError = "Please complete Hotel Name, Hotel City, Check-in Date and Check-out Date, or uncheck \"Accommodation Required\".";
+            return false;
+        }
+
+        if (draft.CheckOutDate.Value.Date < draft.CheckInDate.Value.Date)
+        {
+            accommodationError = "Check-out date cannot be before check-in date.";
+            return false;
+        }
+
+        if (draft.CheckInDate.Value.Date < draft.StartDate.Date)
+        {
+            accommodationError = "Check-in date must be on or after the trip's start date.";
+            return false;
+        }
+
+        if (draft.CheckOutDate.Value.Date > draft.EndDate.Date)
+        {
+            accommodationError = "Check-out date must be on or before the trip's end date.";
+            return false;
+        }
+
+        accommodationError = "";
+        return true;
+    }
+
+    private void ValidateDatesField() => ValidateDates();
+
+   
+    private bool ValidateDates()
+    {
+        if (draft.StartDate != default && draft.StartDate.Date < DateTime.Today)
+        {
+            dateError = "Start date cannot be in the past. Please choose today or a later date.";
+            return false;
+        }
+
+        if (draft.StartDate == default || draft.EndDate == default) { dateError = ""; return true; }
+
+        if (draft.EndDate.Date < draft.StartDate.Date)
+        {
+            dateError = "End date cannot be before start date.";
+            return false;
+        }
+
+        var conflict = existingRequests.Any(x =>
+            x.Id != Id &&
+            x.Status is not (TravelRequestStatus.Rejected or TravelRequestStatus.Cancelled or TravelRequestStatus.Completed) &&
+            x.StartDate.Date <= draft.EndDate.Date && x.EndDate.Date >= draft.StartDate.Date);
+
+        if (conflict)
+        {
+            dateError = "You already have a travel request in progress for these dates. Cancel or wait for it to be resolved before creating an overlapping request.";
+            return false;
+        }
+
+        dateError = "";
+        return true;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Auth.EnsureLoadedAsync()) return;
+        existingRequests = await Api.MyRequestsAsync();
+        if (Id is not null) await LoadForEdit(Id.Value);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Id is not null) await LoadForEdit(Id.Value);
+        else { draft = new TravelRequestInput(); savedDraftId = null; }
+    }
+
+    private async Task LoadForEdit(int id)
+    {
+       
+        var requests = await Api.MyRequestsAsync();
+        var item = requests.FirstOrDefault(x => x.Id == id);
+        if (item is null) { Nav.NavigateTo("/"); return; }
+        draft = new TravelRequestInput
+        {
+            TravelType = item.TravelType,
+            Source = item.Source,
+            Destination = item.Destination,
+            BusinessJustification = item.BusinessJustification,
+            StartDate = item.StartDate,
+            EndDate = item.EndDate,
+            EstimatedCost = item.EstimatedCost,
+            AccommodationRequired = item.AccommodationRequired,
+            HotelName = item.HotelName,
+            HotelCity = item.HotelCity,
+            CheckInDate = item.CheckInDate,
+            CheckOutDate = item.CheckOutDate
+        };
+    }
+
+    private bool CanCreateTravelRequests => Auth.Me?.Roles.Any(role =>
+        role is RoleNames.Employee or RoleNames.Manager or RoleNames.DepartmentHead) == true;
+
+    private int? savedDraftId;
+
+    private void BackToMyRequests() => Nav.NavigateTo("/");
+
+    private async Task SaveDraft()
+    {
+        message = "";
+        if (!ValidateDates()) { message = dateError; return; }
+        if (!ValidateAccommodation()) return;
+        try
+        {
+            
+            var requestId = Id ?? savedDraftId;
+            if (requestId is null) savedDraftId = (await Api.CreateAsync(draft)).Id;
+            else await Api.UpdateDraftAsync(requestId.Value, draft);
+            savedDraftId = null;
+            Nav.NavigateTo("/");
+        }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+
+    private async Task SubmitRequest()
+    {
+        message = "";
+        if (!ValidateDates()) { message = dateError; return; }
+        if (draft.EndDate.Date < draft.StartDate.Date) { message = "End date cannot be before start date."; return; }
+        if (!ValidateAccommodation()) return;
+        try
+        {
+            
+            var requestId = Id ?? savedDraftId;
+
+            if (requestId is null)
+            {
+                savedDraftId = (await Api.CreateAsync(draft)).Id;
+                requestId = savedDraftId;
+            }
+            else
+            {
+                await Api.UpdateDraftAsync(requestId.Value, draft);
+            }
+
+            await Api.SubmitAsync(requestId.Value);
+            savedDraftId = null;
+            Nav.NavigateTo($"/requests/{requestId.Value}");
+        }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+}

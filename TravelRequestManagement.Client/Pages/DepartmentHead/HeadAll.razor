@@ -1,0 +1,34 @@
+﻿@page "/department-head/all"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@inject AuthState Auth
+
+<PageTitle>All Requests - Department Head Dashboard</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.HeadsDepartments)
+{
+    <section><p>You are not currently assigned as Department Head of any department.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="HeadTabs.Items" />
+
+    <section>
+        <h2>All requests</h2>
+        <p class="page-subtitle">
+            Every request escalated to the departments you head - including ones decided before you became
+            department head. The <strong>Decided By</strong> column and filter show whether it was you or a
+            previous department head.
+        </p>
+        <ApprovalAllRequest Role="depthead" />
+    </section>
+}
+
+@code {
+    protected override async Task OnInitializedAsync() => await Auth.EnsureLoadedAsync();
+}

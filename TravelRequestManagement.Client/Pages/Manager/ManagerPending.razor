@@ -1,0 +1,271 @@
+﻿@page "/manager"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using TravelManagement.Services.Shared.DTOs
+@using TravelManagement.Services.Shared.Enums
+@inject ITravelApi Api
+@inject AuthState Auth
+
+<PageTitle>Pending Approvals - Manager Dashboard</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.ManagesDepartments)
+{
+    <section><p>You are not currently assigned as Manager of any department.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="ManagerTabs.Items" />
+
+    <section>
+        <h2>Pending approvals</h2>
+        <p class="page-subtitle">Review requests and trip extensions in your assigned approval scope.</p>
+        <p class="message">@message</p>
+
+        <div class="pending-section">
+            <h3>New requests</h3>
+            @if (NewRequests.Count == 0)
+            {
+                <div class="empty-state">
+                    <div class="empty-icon">📥</div>
+                    <p>No requests are currently awaiting your approval.</p>
+                </div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Employee</th>
+                            <th>Destination</th>
+                            <th>Dates</th>
+                            <th>Cost</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in NewRequests)
+                        {
+                            <tr>
+                                <td>@item.EmployeeName</td>
+                                <td>@item.Destination</td>
+                                <td>@item.StartDate.ToString("dd MMM yyyy") &ndash; @item.EndDate.ToString("dd MMM yyyy")</td>
+                                <td>@item.EstimatedCost</td>
+                                <td class="table-actions">
+                                    <a class="table-link" href="/requests/@item.Id?role=manager">View</a>
+                                    <button disabled="@(busyId is not null)" @onclick="(() => OpenApprove(item.Id))">@(busyId == item.Id ? "Approving..." : "Approve")</button>
+                                    <button disabled="@(busyId is not null)" @onclick="(() => OpenReject(item.Id))">Reject</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+
+        <div class="pending-section">
+            <h3>Trip extensions</h3>
+            @if (Extensions.Count == 0)
+            {
+                <div class="empty-state">
+                    <div class="empty-icon">🧭</div>
+                    <p>No extension requests are currently awaiting your approval.</p>
+                </div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Employee</th>
+                            <th>Request</th>
+                            <th>Current End Date</th>
+                            <th>New End Date</th>
+                            <th>Additional Cost</th>
+                            <th>Reason</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in Extensions)
+                        {
+                            <tr>
+                                <td>@item.EmployeeName</td>
+                                <td>TR-@item.Id.ToString("D6") &middot; @item.Destination</td>
+                                <td>@item.EndDate.ToString("dd MMM yyyy")</td>
+                                <td>@item.PendingExtension?.NewEndDate.ToString("dd MMM yyyy")</td>
+                                <td>@item.PendingExtension?.AdditionalEstimatedCost</td>
+                                <td>@item.PendingExtension?.Reason</td>
+                                <td class="table-actions">
+                                    <a class="table-link" href="/requests/@item.Id?role=manager">View</a>
+                                    <button disabled="@(busyId is not null)" @onclick="(() => OpenApprove(item.Id))">@(busyId == item.Id ? "Approving..." : "Approve")</button>
+                                    <button disabled="@(busyId is not null)" @onclick="(() => OpenReject(item.Id))">Reject</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+}
+
+@if (approveRequestId is not null)
+{
+    <div class="dialog-backdrop">
+        <div class="dialog" role="dialog" aria-modal="true">
+            <div class="section-title"><h2>Approve request</h2><button class="dialog-close-btn" @onclick="CloseApprove">&times;</button></div>
+            <div class="form-card">
+                <p>
+                    Are you sure you want to approve
+                    @if (ApproveTarget is not null)
+                    {
+                        <text>the request from <strong>@ApproveTarget.EmployeeName</strong> to <strong>@ApproveTarget.Destination</strong>?</text>
+                    }
+                    else
+                    {
+                        <text>this request?</text>
+                    }
+                </p>
+                <div class="tabs">
+                    <button class="btn btn-primary" @onclick="ConfirmApprove">Confirm approval</button>
+                    <button @onclick="CloseApprove">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (rejectRequestId is not null)
+{
+    <div class="dialog-backdrop">
+        <div class="dialog" role="dialog" aria-modal="true">
+            <div class="section-title"><h2>Reject travel request</h2><button class="dialog-close-btn" @onclick="CloseReject">&times;</button></div>
+            <div class="form-card">
+                <label>Reason <textarea @bind="rejectReason" placeholder="Explain why this request is being rejected"></textarea></label>
+                <p class="error">@rejectError</p>
+                <div class="tabs">
+                    <button class="btn btn-danger" disabled="@isRejecting" @onclick="ConfirmReject">@(isRejecting ? "Rejecting..." : "Confirm rejection")</button>
+                    <button disabled="@isRejecting" @onclick="CloseReject">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string message = "";
+    private IReadOnlyList<TravelRequestDto> items = [];
+
+    private int? approveRequestId;
+    private TravelRequestDto? ApproveTarget => items.FirstOrDefault(x => x.Id == approveRequestId);
+
+    private int? rejectRequestId;
+    private string rejectReason = "";
+    private string rejectError = "";
+    private bool isRejecting;
+
+   
+    private int? busyId;
+
+    private IReadOnlyList<TravelRequestDto> NewRequests => items.Where(x => x.Status == TravelRequestStatus.PendingManager).ToList();
+    private IReadOnlyList<TravelRequestDto> Extensions => items.Where(x => x.Status == TravelRequestStatus.ExtensionRequested).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Auth.EnsureLoadedAsync()) return;
+        await Load();
+    }
+
+    private Task Load() => Run(async () => items = await Api.ManagerPendingAsync());
+
+    private async Task Approve(int id)
+    {
+        if (busyId is not null) return;
+        message = "";
+        busyId = id;
+        var snapshot = items;
+        var target = items.FirstOrDefault(x => x.Id == id);
+        if (target is null) { busyId = null; return; }
+
+        items = items.Where(x => x.Id != id).ToList();
+
+        try
+        {
+            await Api.DecideManagerAsync(id, true, null);
+            message = "Decision recorded.";
+            await Load(); 
+        }
+        catch (Exception ex)
+        {
+            items = snapshot; 
+            message = ApiErrors.Describe(ex);
+        }
+        finally { busyId = null; }
+    }
+
+    
+    private void OpenApprove(int id) => approveRequestId = id;
+
+    private void CloseApprove() => approveRequestId = null;
+
+    private async Task ConfirmApprove()
+    {
+        if (approveRequestId is null) return;
+        var id = approveRequestId.Value;
+        approveRequestId = null; 
+        await Approve(id);
+    }
+
+   
+    private Task OpenReject(int id)
+    {
+        rejectRequestId = id;
+        rejectReason = "";
+        rejectError = "";
+        return Task.CompletedTask;
+    }
+
+    private void CloseReject()
+    {
+        if (isRejecting) return;
+        rejectRequestId = null;
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (rejectRequestId is null || isRejecting) return;
+        if (string.IsNullOrWhiteSpace(rejectReason)) { rejectError = "A rejection reason is required."; return; }
+
+        var id = rejectRequestId.Value;
+        var snapshot = items;
+
+        isRejecting = true;
+        busyId = id;
+        rejectError = "";
+        items = items.Where(x => x.Id != id).ToList();
+        rejectRequestId = null; 
+        try
+        {
+            await Api.DecideManagerAsync(id, false, rejectReason);
+            message = "Decision recorded.";
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            items = snapshot; 
+            message = ApiErrors.Describe(ex);
+        }
+        finally { isRejecting = false; busyId = null; }
+    }
+
+    private async Task Run(Func<Task> action)
+    {
+        try { message = ""; await action(); }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+}

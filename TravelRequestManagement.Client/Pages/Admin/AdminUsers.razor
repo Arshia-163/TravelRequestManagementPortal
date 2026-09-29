@@ -1,0 +1,408 @@
+﻿@page "/admin/users"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode @(new InteractiveAutoRenderMode(prerender: false))
+@using TravelManagement.Services.Shared.Constants
+@using TravelManagement.Services.Shared.DTOs
+@inject ITravelApi Api
+@inject AuthState Auth
+@inject DashboardNotifier Notifier
+@inject IJSRuntime JS
+
+<PageTitle>Users - Travel Admin</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.Roles.Contains(RoleNames.TravelAdmin))
+{
+    <section><p>You do not have Travel Admin access.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="AdminTabs.Items" />
+
+    <section>
+        <div class="section-title">
+            <div><h2>Users &amp; employees</h2><p class="page-subtitle">Create employee accounts, assign departments, managers, department heads, and roles.</p></div>
+            <button class="btn" @onclick="OpenCreate">+ New employee</button>
+        </div>
+        <p class="@(isError ? "error" : "message")">@message</p>
+
+        @if (showForm)
+        {
+            <div class="form-card form-card-wide">
+                <h3>@(editingUserId is null ? "Create employee" : "Edit employee")</h3>
+                <p class="field-hint">Fields marked with <span class="required">*</span> are required.</p>
+
+                <div class="form-grid">
+                    <h4 class="form-section-heading form-grid-span">Identity</h4>
+                    <label>
+                        <span>First name <span class="required">*</span></span>
+                        <input @bind="newUser.FirstName" placeholder="First name" disabled="@(editingUserId is not null)" />
+                    </label>
+                    <label>
+                        <span>Last name <span class="required">*</span></span>
+                        <input @bind="newUser.LastName" placeholder="Last name" disabled="@(editingUserId is not null)" />
+                    </label>
+                    <label>
+                        <span>Email <span class="required">*</span></span>
+                        <input @bind="newUser.Email" placeholder="name@company.com" disabled="@(editingUserId is not null)" />
+                    </label>
+                    <label>
+                        <span>Phone <span class="required">*</span></span>
+                        <input @bind="newUser.Phone" placeholder="10-digit phone number" maxlength="10" />
+                    </label>
+                    <label>
+                        Gender
+                        <select @bind="newUser.Gender">
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </label>
+                    <label>
+                        Own department
+                        <select @bind="newUser.DepartmentId">
+                            <option value="">-- Select department --</option>
+                            @foreach (var d in departments)
+                            {
+                                <option value="@d.Id">@d.Name</option>
+                            }
+                        </select>
+                    </label>
+                    <h4 class="form-section-heading form-grid-span">Roles and access</h4>
+                    <fieldset class="role-checkboxes form-grid-span">
+                        <legend>Role <span class="required">*</span></legend>
+                        <label><input type="checkbox" @bind="managerRole" /> Manager</label>
+                        <label><input type="checkbox" @bind="headRole" /> Department Head</label>
+                        <label><input type="checkbox" @bind="adminRole" /> Travel Admin</label>
+                    </fieldset>
+                    @if (editingUserId is null)
+                    {
+                        <label class="form-grid-span">
+                            Temporary password
+                            <input @bind="newUser.Password" @bind:event="oninput" @bind:after="ValidatePasswordField" type="password" placeholder="Temporary password (defaults to Welcome@123 if left blank)" />
+                        </label>
+                        <p class="field-hint form-grid-span">
+                            Leave blank to use the default <strong>Welcome@@123</strong>, or enter at least 8 characters including one uppercase letter, one lowercase letter and one number.
+                        </p>
+                        @if (!string.IsNullOrEmpty(passwordError))
+                        {
+                            <p class="error form-grid-span">@passwordError</p>
+                        }
+                    }
+                </div>
+                <p class="field-hint">
+                    Department and Role are set here by Travel Admin and cannot be changed by the employee. Manager and Department Head for this department are managed from the Departments page.
+                </p>
+
+                <div class="tabs">
+                    <button class="btn btn-primary" @onclick="SaveUser">@(editingUserId is null ? "Create employee" : "Save employee")</button>
+                    <button @onclick="ResetUserForm">Cancel</button>
+                </div>
+            </div>
+        }
+
+        <div class="filters-bar">
+            <input @bind="searchText" @bind:event="oninput" @bind:after="ResetPage" placeholder="Search by name or email..." />
+            <select @bind="roleFilter" @bind:after="ResetPage">
+                <option value="">All roles</option>
+                @foreach (var r in RoleNames.All)
+                {
+                    <option value="@r">@r</option>
+                }
+            </select>
+            <select @bind="departmentFilter" @bind:after="ResetPage">
+                <option value="">All departments</option>
+                <option value="none">Unassigned</option>
+                @foreach (var d in departments)
+                {
+                    <option value="@d.Id">@d.Name</option>
+                }
+            </select>
+            @if (!string.IsNullOrWhiteSpace(searchText) || !string.IsNullOrEmpty(roleFilter) || !string.IsNullOrEmpty(departmentFilter))
+            {
+                <button @onclick="ClearFilters">Clear filters</button>
+            }
+        </div>
+
+        @if (FilteredUsers.Count == 0)
+        {
+            <p class="empty">@(users.Count == 0 ? "No employees yet." : "No employees match the current filters.")</p>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>Employee ID</th><th>Name</th><th>Email</th><th>Department</th><th>Role</th><th>Status</th></tr></thead>
+                <tbody>
+                    @foreach (var u in PagedUsers)
+                    {
+                        <tr>
+                            <td>
+                                @(u.EmployeeCode ?? "—")
+                            </td>
+                            <td>@u.Name</td>
+                            <td>@u.Email</td>
+                            <td>@DepartmentName(u.DepartmentId)</td>
+                            <td>
+                                @foreach (var r in u.Roles)
+                                {
+                                    <span class="role-pill">@r</span>
+                                }
+                            </td>
+                            <td class="status-action">
+                                <button class="status-pill @(u.IsActive ? "status-active" : "status-inactive")" title="Click to @(u.IsActive ? "deactivate" : "activate")" @onclick="(() => ToggleActive(u))">@(u.IsActive ? "Active" : "Inactive")</button>
+                                <button @onclick="(() => EditUser(u))">Edit</button>
+                                <button class="btn-danger" @onclick="(() => DeleteUser(u))">Delete</button>
+                                <button title="View details" aria-label="View details" @onclick="(() => ViewUser(u))">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem; margin-top:1rem;">
+                <span style="color:var(--muted);">Showing @((SafePage - 1) * PageSize + 1)–@Math.Min(SafePage * PageSize, FilteredUsers.Count) of @FilteredUsers.Count users</span>
+                <div style="display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">
+                    <button disabled="@(SafePage == 1)" @onclick="(() => GoToPage(1))">First</button>
+                    <button disabled="@(SafePage == 1)" @onclick="(() => GoToPage(SafePage - 1))">Previous</button>
+                    <span>Page @SafePage of @TotalPages</span>
+                    <button disabled="@(SafePage == TotalPages)" @onclick="(() => GoToPage(SafePage + 1))">Next</button>
+                    <button disabled="@(SafePage == TotalPages)" @onclick="(() => GoToPage(TotalPages))">Last</button>
+                </div>
+            </div>
+        }
+    </section>
+}
+
+@if (selectedUser is not null)
+{
+    <div class="dialog-backdrop">
+        <div class="dialog" role="dialog" aria-modal="true">
+            <div class="section-title"><h2>User info</h2><button class="dialog-close-btn" @onclick="(() => selectedUser = null)">&times;</button></div>
+            <dl>
+                <dt>Employee ID</dt>
+                <dd>@(selectedUser.EmployeeCode ?? "—")</dd>
+                <dt>Full name</dt>
+                <dd>@selectedUser.Name</dd>
+                <dt>Email</dt>
+                <dd>@selectedUser.Email</dd>
+                <dt>Phone</dt>
+                <dd>@(selectedUser.Phone ?? "—")</dd>
+                <dt>Gender</dt>
+                <dd>@selectedUser.Gender</dd>
+                <dt>Department</dt>
+                <dd>@DepartmentName(selectedUser.DepartmentId)</dd>
+                <dt>Role</dt>
+                <dd>@string.Join(", ", selectedUser.Roles)</dd>
+                <dt>Status</dt>
+                <dd><span class="status-pill @(selectedUser.IsActive ? "status-active" : "status-inactive")">@(selectedUser.IsActive ? "Active" : "Inactive")</span></dd>
+                <dt>Created on</dt>
+                <dd>@selectedUser.CreatedAt.ToShortDateString()</dd>
+            </dl>
+            <button class="btn" @onclick="(() => selectedUser = null)">Close</button>
+        </div>
+    </div>
+}
+
+@code {
+    private string message = "";
+    private bool isError;
+    private string passwordError = "";
+    private bool showForm;
+    private int? editingUserId;
+    private bool employeeRole = true, managerRole, headRole, adminRole;
+    private UserInput newUser = new();
+    private IReadOnlyList<UserDto> users = [];
+    private IReadOnlyList<DepartmentDto> departments = [];
+    private UserDto? selectedUser;
+    private string searchText = "";
+    private string roleFilter = "";
+    private string departmentFilter = "";
+
+    private IReadOnlyList<UserDto> FilteredUsers => users.Where(u =>
+            (string.IsNullOrWhiteSpace(searchText)
+                || u.Name.Contains(searchText, StringComparison.OrdinalIgnoreCase)
+                || u.Email.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+            && (string.IsNullOrEmpty(roleFilter) || u.Roles.Contains(roleFilter))
+            && (string.IsNullOrEmpty(departmentFilter)
+                || (departmentFilter == "none" && u.DepartmentId is null)
+                || (departmentFilter != "none" && u.DepartmentId == int.Parse(departmentFilter))))
+        .ToList();
+
+    private void ClearFilters() { searchText = ""; roleFilter = ""; departmentFilter = ""; currentPage = 1; }
+
+ 
+    private const int PageSize = 15;
+    private int currentPage = 1;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(FilteredUsers.Count / (double)PageSize));
+    private int SafePage => Math.Min(Math.Max(currentPage, 1), TotalPages);
+    private IReadOnlyList<UserDto> PagedUsers => FilteredUsers.Skip((SafePage - 1) * PageSize).Take(PageSize).ToList();
+    private void GoToPage(int page) => currentPage = Math.Clamp(page, 1, TotalPages);
+    private void ResetPage() => currentPage = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Auth.EnsureLoadedAsync()) return;
+        await LoadAll();
+    }
+
+    private Task LoadAll() => Run(async () =>
+    {
+        users = (await Api.UsersAsync()).OrderBy(u => u.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        departments = await Api.DepartmentsAsync();
+    });
+
+    private void ViewUser(UserDto u) => selectedUser = u;
+
+    private void OpenCreate() { ResetUserForm(); showForm = true; }
+
+    
+    private void ValidatePasswordField() => passwordError = DescribePasswordProblem(newUser.Password) ?? "";
+
+    private static string? DescribePasswordProblem(string? password)
+    {
+        // Blank is allowed: the server falls back to the default Welcome@123.
+        if (string.IsNullOrWhiteSpace(password)) return null;
+
+        var missing = new List<string>();
+        if (password.Length < 8) missing.Add("at least 8 characters");
+        if (!password.Any(char.IsUpper)) missing.Add("one uppercase letter");
+        if (!password.Any(char.IsLower)) missing.Add("one lowercase letter");
+        if (!password.Any(char.IsDigit)) missing.Add("one number");
+
+        return missing.Count == 0
+            ? null
+            : $"Temporary password must contain {string.Join(", ", missing)}. Leave it blank to use the default Welcome@123.";
+    }
+
+    private Task SaveUser() => Run(async () =>
+    {
+        var isNewUser = editingUserId is null;
+
+        if (isNewUser)
+        {
+            passwordError = DescribePasswordProblem(newUser.Password) ?? "";
+            if (passwordError.Length > 0)
+            {
+                Fail("Please fix the highlighted fields before saving.");
+                return;
+            }
+        }
+
+        newUser.Roles = Roles();
+        if (isNewUser) await Api.CreateUserAsync(newUser);
+        else if (editingUserId is int userId) await Api.UpdateUserAsync(userId, newUser);
+        ResetUserForm();
+        await LoadAll();
+        Ok("Employee saved.");
+
+       
+        if (isNewUser) Notifier.NotifyUsersChanged();
+    });
+
+    private Task ToggleActive(UserDto u) => Run(async () =>
+    {
+        if (u.IsActive && u.Id == Auth.Me?.Id)
+        {
+            Fail("You cannot deactivate your own account.");
+            return;
+        }
+        if (u.IsActive && IsLastActiveTravelAdmin(u))
+        {
+            Fail("Cannot deactivate the last active Travel Admin. Activate another Travel Admin first.");
+            return;
+        }
+        if (u.IsActive) await Api.DeactivateUserAsync(u.Id);
+        else await Api.ActivateUserAsync(u.Id);
+        await LoadAll();
+        Ok(u.IsActive ? "Employee deactivated." : "Employee activated.");
+    });
+
+    private Task DeleteUser(UserDto u) => Run(async () =>
+    {
+        if (u.Id == Auth.Me?.Id)
+        {
+            Fail("You cannot delete your own account.");
+            return;
+        }
+        if (DepartmentsLedBy(u.Id).Count > 0)
+        {
+            Fail($"{u.Name} cannot be deleted while assigned as a Manager or Department Head for {string.Join(", ", DepartmentsLedBy(u.Id))}. Reassign those departments first.");
+            return;
+        }
+        if (IsLastActiveTravelAdmin(u))
+        {
+            Fail("Cannot delete the last active Travel Admin. Create or activate another Travel Admin first.");
+            return;
+        }
+        if (!await JS.InvokeAsync<bool>("confirm", $"Delete {u.Name}? This cannot be undone.")) return;
+        await Api.DeleteUserAsync(u.Id);
+        await LoadAll();
+        Ok("Employee deleted.");
+    });
+
+    private void EditUser(UserDto u)
+    {
+        editingUserId = u.Id;
+        var parts = u.Name.Split(' ');
+        newUser = new UserInput { FirstName = parts.FirstOrDefault() ?? "", LastName = string.Join(' ', parts.Skip(1)), Email = u.Email, Phone = u.Phone ?? "", Gender = u.Gender, DepartmentId = u.DepartmentId };
+        employeeRole = true;
+        managerRole = u.Roles.Contains(RoleNames.Manager);
+        headRole = u.Roles.Contains(RoleNames.DepartmentHead);
+        adminRole = u.Roles.Contains(RoleNames.TravelAdmin);
+        showForm = true;
+    }
+
+    private void ResetUserForm()
+    {
+        editingUserId = null;
+        passwordError = "";
+        newUser = new();
+        employeeRole = true;
+        managerRole = headRole = adminRole = false;
+        showForm = false;
+    }
+
+    private List<string> Roles()
+    {
+        var r = new List<string>();
+        if (employeeRole) r.Add(RoleNames.Employee);
+        if (managerRole) r.Add(RoleNames.Manager);
+        if (headRole) r.Add(RoleNames.DepartmentHead);
+        if (adminRole) r.Add(RoleNames.TravelAdmin);
+        return r;
+    }
+
+    private string DepartmentName(int? id) => departments.FirstOrDefault(x => x.Id == id)?.Name ?? "Unassigned";
+
+    private List<string> DepartmentsLedBy(int userId) => departments
+        .Where(d => d.ManagerId == userId || d.DepartmentHeadId == userId)
+        .Select(d => d.Name)
+        .ToList();
+
+    private bool IsLastActiveTravelAdmin(UserDto user) =>
+        user.Roles.Contains(RoleNames.TravelAdmin) &&
+        users.Count(x => x.IsActive && x.Roles.Contains(RoleNames.TravelAdmin)) <= 1;
+
+    private async Task Run(Func<Task> action)
+    {
+        try
+        {
+            message = "";
+            isError = false;
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Fail(ApiErrors.Describe(ex));
+        }
+    }
+
+    private void Fail(string text) { isError = true; message = text; }
+
+    private void Ok(string text) { isError = false; message = text; }
+}

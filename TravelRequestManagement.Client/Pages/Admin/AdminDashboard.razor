@@ -1,0 +1,124 @@
+﻿@page "/admin"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using TravelManagement.Services.Shared.Constants
+@using TravelManagement.Services.Shared.DTOs
+@inject ITravelApi Api
+@inject AuthState Auth
+@inject DashboardNotifier Notifier
+@implements IDisposable
+
+<PageTitle>Dashboard - Travel Admin</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.Roles.Contains(RoleNames.TravelAdmin))
+{
+    <section><p>You do not have Travel Admin access.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="AdminTabs.Items" />
+
+    <section>
+        <div class="section-title">
+            <div><h2>Welcome, @Auth.Me.Name</h2><p class="page-subtitle">Organization administration and travel administration, in one place.</p></div>
+        </div>
+        <p class="message">@message</p>
+
+        @if (dashboard is not null)
+        {
+            <div class="metrics-group">
+                <h4>Organization</h4>
+                <div class="metrics">
+                    <div><span>Total employees</span><strong>@dashboard.TotalEmployees</strong></div>
+                    <div><span>Total departments</span><strong>@dashboard.TotalDepartments</strong></div>
+                    <div><span>Total managers</span><strong>@dashboard.TotalManagers</strong></div>
+                    <div><span>Total department heads</span><strong>@TotalDepartmentHeads</strong></div>
+                </div>
+            </div>
+
+            <div class="metrics-group">
+                <h4>Travel administration</h4>
+                <div class="metrics">
+                    <div class="is-success"><span>Approved &amp; awaiting booking</span><strong>@approvedForBooking.Count</strong></div>
+                </div>
+            </div>
+
+            <h3>Recently joined employees</h3>
+            @if (dashboard.RecentlyJoinedEmployees.Count == 0)
+            {
+                <p class="empty">No employees yet.</p>
+            }
+            else
+            {
+                <table>
+                    <thead><tr><th>Name</th><th>Email</th><th>Own department</th><th>Roles</th></tr></thead>
+                    <tbody>
+                        @foreach (var u in dashboard.RecentlyJoinedEmployees)
+                        {
+                            <tr><td>@u.Name</td><td>@u.Email</td><td>@DepartmentName(u.DepartmentId)</td><td>@string.Join(", ", u.Roles)</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+
+        <div class="quick-actions">
+            <a class="btn btn-block" href="/admin/departments">Manage departments</a>
+            <a class="btn-secondary btn-block" href="/admin/users">Manage users</a>
+            <a class="btn-secondary btn-block" href="/admin/approved-travel">Manage bookings</a>
+        </div>
+    </section>
+}
+
+@code {
+    private string message = "";
+    private DashboardDto? dashboard;
+    private IReadOnlyList<UserDto> users = [];
+    private IReadOnlyList<DepartmentDto> departments = [];
+    private IReadOnlyList<TravelRequestDto> approvedForBooking = [];
+
+    private int TotalDepartmentHeads => users.Count(u => u.Roles.Contains(RoleNames.DepartmentHead));
+
+    protected override async Task OnInitializedAsync()
+    {
+        
+        Notifier.UsersChanged += OnDataChangedElsewhere;
+        Notifier.TravelRequestsChanged += OnDataChangedElsewhere;
+
+        if (!await Auth.EnsureLoadedAsync()) return;
+        await LoadAll();
+    }
+
+    private void OnDataChangedElsewhere() => _ = InvokeAsync(async () =>
+    {
+        await LoadAll();
+        StateHasChanged();
+    });
+
+    private Task LoadAll() => Run(async () =>
+    {
+        dashboard = await Api.AdminDashboardAsync();
+        users = await Api.UsersAsync();
+        departments = await Api.DepartmentsAsync();
+        approvedForBooking = await Api.ApprovedForBookingAsync();
+    });
+
+    public void Dispose()
+    {
+        Notifier.UsersChanged -= OnDataChangedElsewhere;
+        Notifier.TravelRequestsChanged -= OnDataChangedElsewhere;
+    }
+
+    private string DepartmentName(int? id) => departments.FirstOrDefault(x => x.Id == id)?.Name ?? "Unassigned";
+
+    private async Task Run(Func<Task> action)
+    {
+        try { message = ""; await action(); }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+}

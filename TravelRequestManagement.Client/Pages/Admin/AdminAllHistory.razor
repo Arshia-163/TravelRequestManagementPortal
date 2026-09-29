@@ -1,0 +1,183 @@
+﻿@page "/admin/history/all"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using TravelManagement.Services.Shared.Constants
+@using TravelManagement.Services.Shared.DTOs
+@using TravelManagement.Services.Shared.Enums
+@inject AuthState Auth
+@inject ITravelApi Api
+@inject NavigationManager Nav
+
+<PageTitle>All History - Travel Admin</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.Roles.Contains(RoleNames.TravelAdmin))
+{
+    <section><p>You do not have Travel Admin access.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="AdminTabs.Items" />
+
+    <section>
+        <div class="section-title">
+            <div><h2>All history</h2><p class="page-subtitle">Every travel request across every employee, with filters and sorting.</p></div>
+            <a class="btn" href="/admin/history">Back to lookup</a>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(message))
+        {
+            <p class="error">@message</p>
+        }
+
+        <div class="filters-bar">
+            <input @bind="searchText" @bind:event="oninput" @bind:after="ResetPage" placeholder="Search by employee, department or destination..." />
+            <select @bind="statusFilter" @bind:after="ResetPage">
+                <option value="">All statuses</option>
+                @foreach (var s in Enum.GetValues<TravelRequestStatus>())
+                {
+                    <option value="@s">@StatusText(s)</option>
+                }
+            </select>
+            <select @bind="departmentFilter" @bind:after="ResetPage">
+                <option value="">All departments</option>
+                @foreach (var d in DepartmentNames)
+                {
+                    <option value="@d">@d</option>
+                }
+            </select>
+            <select @bind="sortBy" @bind:after="ResetPage">
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="employee">Employee (A-Z)</option>
+                <option value="destination">Destination (A-Z)</option>
+                <option value="status">Status</option>
+            </select>
+            @if (!string.IsNullOrWhiteSpace(searchText) || !string.IsNullOrEmpty(statusFilter) || !string.IsNullOrEmpty(departmentFilter) || sortBy != "newest")
+            {
+                <button @onclick="ClearFilters">Clear filters</button>
+            }
+        </div>
+
+        @if (VisibleRequests.Count == 0)
+        {
+            <p class="empty">@(requests.Count == 0 ? "No travel requests recorded yet." : "No requests match the current filters.")</p>
+        }
+        else
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th>Request</th>
+                        <th>Employee</th>
+                        <th>Department</th>
+                        <th>Destination</th>
+                        <th>Dates</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in PagedRequests)
+                    {
+                        <tr>
+                            <td>TR-@r.Id.ToString("D6")</td>
+                            <td>@r.EmployeeName</td>
+                            <td>@r.DepartmentName</td>
+                            <td>@r.Destination</td>
+                            <td>@r.StartDate.ToString("dd MMM yyyy") – @r.EndDate.ToString("dd MMM yyyy")</td>
+                            <td><span class="status @StatusClass(r.Status)">@StatusText(r.Status)</span></td>
+                            <td>@r.CreatedAt.ToLocalTime().ToString("dd MMM yyyy")</td>
+                            <td><a class="table-link" href="@DetailHref(r.Id)">View</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem; margin-top:1rem;">
+                <span style="color:var(--muted);">Showing @((SafePage - 1) * PageSize + 1)–@Math.Min(SafePage * PageSize, VisibleRequests.Count) of @VisibleRequests.Count requests</span>
+                <div style="display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">
+                    <button disabled="@(SafePage == 1)" @onclick="(() => GoToPage(1))">First</button>
+                    <button disabled="@(SafePage == 1)" @onclick="(() => GoToPage(SafePage - 1))">Previous</button>
+                    <span>Page @SafePage of @TotalPages</span>
+                    <button disabled="@(SafePage == TotalPages)" @onclick="(() => GoToPage(SafePage + 1))">Next</button>
+                    <button disabled="@(SafePage == TotalPages)" @onclick="(() => GoToPage(TotalPages))">Last</button>
+                </div>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    private string message = "";
+    private IReadOnlyList<TravelRequestDto> requests = [];
+    private string searchText = "";
+    private string statusFilter = "";
+    private string departmentFilter = "";
+    private string sortBy = "newest";
+
+    private IReadOnlyList<string> DepartmentNames =>
+        requests.Select(r => r.DepartmentName).Distinct().OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+
+    private IReadOnlyList<TravelRequestDto> VisibleRequests
+    {
+        get
+        {
+            var filtered = requests.Where(r =>
+                (string.IsNullOrWhiteSpace(searchText)
+                    || r.EmployeeName.Contains(searchText, StringComparison.OrdinalIgnoreCase)
+                    || r.DepartmentName.Contains(searchText, StringComparison.OrdinalIgnoreCase)
+                    || r.Destination.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+                && (string.IsNullOrEmpty(statusFilter) || r.Status.ToString() == statusFilter)
+                && (string.IsNullOrEmpty(departmentFilter) || r.DepartmentName == departmentFilter));
+
+            return (sortBy switch
+            {
+                "oldest" => filtered.OrderBy(r => r.CreatedAt),
+                "employee" => filtered.OrderBy(r => r.EmployeeName, StringComparer.OrdinalIgnoreCase),
+                "destination" => filtered.OrderBy(r => r.Destination, StringComparer.OrdinalIgnoreCase),
+                "status" => filtered.OrderBy(r => r.Status.ToString()),
+                _ => filtered.OrderByDescending(r => r.CreatedAt)
+            }).ToList();
+        }
+    }
+
+    private void ClearFilters() { searchText = ""; statusFilter = ""; departmentFilter = ""; sortBy = "newest"; currentPage = 1; }
+
+    // Pagination: 15 requests per page
+    private const int PageSize = 15;
+    private int currentPage = 1;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(VisibleRequests.Count / (double)PageSize));
+    private int SafePage => Math.Min(Math.Max(currentPage, 1), TotalPages);
+    private IReadOnlyList<TravelRequestDto> PagedRequests => VisibleRequests.Skip((SafePage - 1) * PageSize).Take(PageSize).ToList();
+    private void GoToPage(int page) => currentPage = Math.Clamp(page, 1, TotalPages);
+    private void ResetPage() => currentPage = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Auth.EnsureLoadedAsync()) return;
+        await Load();
+    }
+
+    private Task Load() => Run(async () => requests = await Api.AdminAllRequestsAsync());
+
+    private static string DetailHref(int requestId) => $"/admin/history?requestNumber={requestId}";
+
+    private static string StatusClass(TravelRequestStatus status) => $"status-{status.ToString().ToLowerInvariant()}";
+    private static string StatusText(TravelRequestStatus status) => status switch
+    {
+        TravelRequestStatus.PendingManager => "Pending manager",
+        TravelRequestStatus.PendingDeptHead => "Pending department head",
+        _ => status.ToString()
+    };
+
+    private async Task Run(Func<Task> action)
+    {
+        try { message = ""; await action(); }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+}

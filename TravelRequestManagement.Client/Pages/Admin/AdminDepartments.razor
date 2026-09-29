@@ -1,0 +1,396 @@
+﻿@page "/admin/departments"
+
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+
+@rendermode InteractiveAuto
+@attribute [Authorize]
+
+@using TravelManagement.Services.Shared.Constants
+
+@using TravelManagement.Services.Shared.DTOs
+
+
+@inject ITravelApi Api
+
+@inject AuthState Auth
+
+@inject IJSRuntime JS
+
+@inject NavigationManager Nav
+
+
+
+<PageTitle>Departments - Travel Admin</PageTitle>
+
+
+
+@if (Auth.Me is null)
+
+{
+
+    <p>Loading...</p>
+
+}
+
+else if (!Auth.Me.Roles.Contains(RoleNames.TravelAdmin))
+
+{
+
+    <section><p>You do not have Travel Admin access.</p></section>
+
+}
+
+else
+
+{
+
+    <AreaTabs Tabs="AdminTabs.Items" />
+
+    <section>
+
+        <div class="section-title">
+
+            <div>
+
+                <h2>Departments</h2>
+
+                <p class="page-subtitle">Organization structure: departments, managers, and department heads.</p>
+
+            </div>
+
+            <button class="btn" @onclick="OpenCreate">+ New department</button>
+
+        </div>
+
+        <p class="message">@message</p>
+
+
+
+        @if (showForm)
+
+        {
+
+            <div class="form-card">
+
+                <h3>@(editingDepartmentId is null ? "Create department" : "Edit department")</h3>
+
+                <div class="form-grid">
+
+                    <label>
+                        Department name
+
+                        <input @bind="newDepartment.Name" placeholder="e.g. IT" />
+
+                    </label>
+
+                    <label>
+                        Travel approval limit
+
+                        <input type="number" step="0.01" min="0.01" @bind="newDepartment.TravelApprovalLimit" placeholder="e.g. 1000" />
+
+                    </label>
+
+                    <div>
+
+                        <label>
+                            Manager <span class="hint">@(editingDepartmentId is null ? "(required)" : "")</span>
+
+                            <select @bind="newDepartment.ManagerId">
+
+                                <option value="">-- No manager yet --</option>
+
+                                @foreach (var u in ManagerOptions)
+                                {
+                                    <option value="@u.Id">@u.Name</option>
+                                }
+
+                            </select>
+
+                        </label>
+
+                    </div>
+
+                    <div>
+
+                        <label>
+                            Department Head <span class="hint">@(editingDepartmentId is null ? "(required)" : "")</span>
+
+                            <select @bind="newDepartment.DepartmentHeadId">
+
+                                <option value="">-- No department head yet --</option>
+
+                                @foreach (var u in DepartmentHeadOptions)
+                                {
+                                    <option value="@u.Id">@u.Name</option>
+                                }
+
+                            </select>
+
+                        </label>
+
+                    </div>
+
+                </div>
+
+                <div class="tabs">
+
+                    <button class="btn btn-primary" @onclick="SaveDepartment" disabled="@isBusy">
+                        @(isBusy ? "Saving..." : (editingDepartmentId is null ? "Create department" : "Save department"))
+                    </button>
+
+                    <button @onclick="ResetDepartmentForm" disabled="@isBusy">Cancel</button>
+
+                </div>
+
+            </div>
+
+        }
+
+
+
+        @if (departments.Count == 0)
+
+        {
+
+            <p class="empty">No departments yet.</p>
+
+        }
+
+        else
+
+        {
+
+            <table>
+
+                <thead>
+
+                    <tr>
+
+                        <th>Department</th>
+
+                        <th>Approval limit</th>
+
+                        <th>Manager</th>
+
+                        <th>Department Head</th>
+
+                        <th>Employees</th>
+
+                        <th></th>
+
+                    </tr>
+
+                </thead>
+
+                <tbody>
+
+                    @foreach (var d in departments)
+
+                    {
+
+                        <tr>
+
+                            <td>@d.Name</td>
+
+                            <td>@d.TravelApprovalLimit</td>
+
+                            <td>@UserName(d.ManagerId)</td>
+
+                            <td>@UserName(d.DepartmentHeadId)</td>
+
+                            <td>@EmployeeCount(d.Id)</td>
+
+                            <td class="table-actions">
+
+                                <button @onclick="() => ViewDepartment(d.Id)">View</button>
+
+                                <button @onclick="(() => EditDepartment(d))">Edit</button>
+
+                                <button class="btn-danger" @onclick="(() => DeleteDepartment(d))">Delete</button>
+
+                            </td>
+
+                        </tr>
+
+                    }
+
+                </tbody>
+
+            </table>
+
+        }
+
+    </section>
+
+}
+
+
+
+@code {
+
+    private string message = "";
+
+    private bool showForm;
+
+    private bool isBusy;
+
+    private int? editingDepartmentId;
+
+    private DepartmentInput newDepartment = new();
+
+    private IReadOnlyList<UserDto> users = [];
+
+    private IReadOnlyList<DepartmentDto> departments = [];
+
+
+
+    protected override async Task OnInitializedAsync()
+
+    {
+
+        if (!await Auth.EnsureLoadedAsync()) return;
+
+        await LoadAll();
+
+    }
+
+
+
+    private Task LoadAll() => Run(async () =>
+
+    {
+
+        users = await Api.UsersAsync();
+
+        departments = await Api.DepartmentsAsync();
+
+    });
+
+
+
+    private void OpenCreate() { ResetDepartmentForm(); showForm = true; }
+
+
+
+    private Task SaveDepartment() => Run(async () =>
+
+    {
+
+        if (editingDepartmentId is null && (newDepartment.ManagerId is null || newDepartment.DepartmentHeadId is null))
+
+        {
+
+            message = "Select both a Manager and a Department Head to create a department.";
+
+            return;
+
+        }
+
+        if (newDepartment.ManagerId is not null && newDepartment.ManagerId == newDepartment.DepartmentHeadId)
+
+        {
+
+            message = "Choose two different people: the Manager and Department Head cannot be the same person.";
+
+            return;
+
+        }
+
+        DepartmentDto saved;
+
+        if (editingDepartmentId is null) saved = await Api.CreateDepartmentAsync(newDepartment);
+
+        else if (editingDepartmentId is int departmentId) saved = await Api.UpdateDepartmentAsync(departmentId, newDepartment);
+
+        else return;
+
+        ResetDepartmentForm();
+
+        Nav.NavigateTo($"/admin/departments/{saved.Id}");
+
+    });
+
+
+
+    private void EditDepartment(DepartmentDto d)
+
+    {
+
+        editingDepartmentId = d.Id;
+
+        newDepartment = new DepartmentInput { Name = d.Name, TravelApprovalLimit = d.TravelApprovalLimit, ManagerId = d.ManagerId, DepartmentHeadId = d.DepartmentHeadId };
+
+        showForm = true;
+
+    }
+
+
+
+    private void ResetDepartmentForm() { editingDepartmentId = null; newDepartment = new(); showForm = false; }
+
+
+
+    private void ViewDepartment(int id) => Nav.NavigateTo($"/admin/departments/{id}");
+
+
+
+    private Task DeleteDepartment(DepartmentDto d) => Run(async () =>
+
+    {
+
+        if (!await JS.InvokeAsync<bool>("confirm", $"Delete {d.Name}? This cannot be undone.")) return;
+
+        await Api.DeleteDepartmentAsync(d.Id);
+
+        await LoadAll();
+
+        message = "Department deleted.";
+
+    });
+
+
+
+
+    private List<UserDto> DepartmentEmployees(int departmentId) =>
+
+ users.Where(u => u.DepartmentId == departmentId).OrderBy(u => u.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+
+
+    private int EmployeeCount(int departmentId) => users.Count(u => u.DepartmentId == departmentId);
+
+
+
+    private string UserName(int? id) => users.FirstOrDefault(x => x.Id == id)?.Name ?? "Unassigned";
+
+
+
+    private IEnumerable<UserDto> ManagerOptions =>
+
+ users.Where(u => (u.Roles.Contains(RoleNames.Manager) && u.IsActive) || u.Id == newDepartment.ManagerId);
+
+
+
+    private IEnumerable<UserDto> DepartmentHeadOptions =>
+
+    users.Where(u => (u.Roles.Contains(RoleNames.DepartmentHead) && u.IsActive) || u.Id == newDepartment.DepartmentHeadId);
+
+
+
+    private async Task Run(Func<Task> action)
+
+    {
+
+        if (isBusy) return;
+
+        isBusy = true;
+
+        try { message = ""; await action(); }
+
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+
+        finally { isBusy = false; }
+
+    }
+
+}

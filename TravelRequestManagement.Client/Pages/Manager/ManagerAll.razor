@@ -1,0 +1,33 @@
+﻿@page "/manager/all"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@inject AuthState Auth
+
+<PageTitle>All Requests - Manager Dashboard</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.ManagesDepartments)
+{
+    <section><p>You are not currently assigned as Manager of any department.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="ManagerTabs.Items" />
+
+    <section>
+        <h2>All requests</h2>
+        <p class="page-subtitle">
+            Every request submitted to the departments you manage - including ones decided before you became
+            manager. The <strong>Decided By</strong> column and filter show whether it was you or a previous manager.
+        </p>
+        <ApprovalAllRequest Role="manager" />
+    </section>
+}
+
+@code {
+    protected override async Task OnInitializedAsync() => await Auth.EnsureLoadedAsync();
+}

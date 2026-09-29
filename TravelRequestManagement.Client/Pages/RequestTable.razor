@@ -1,0 +1,178 @@
+@using TravelManagement.Services.Shared.DTOs
+@using TravelManagement.Services.Shared.Enums
+
+@if (Items.Count == 0)
+{
+    <p class="empty">No requests to show.</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Requested By</th>
+                <th>Destination</th>
+                <th>Department</th>
+                <th>Dates</th>
+                <th>Cost</th>
+                <th>Status</th>
+                @if (DecisionAction is not null)
+                {
+                    <th>@DecisionColumnHeader</th>
+                }
+                <th>Details / History</th>
+                @if (HasActions)
+                {
+                    <th>Actions</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in Items)
+            {
+                <tr>
+                    <td>@item.EmployeeName</td>
+                    <td>@item.Destination</td>
+                    <td>@item.DepartmentName</td>
+                    <td>@item.StartDate.ToString("dd MMM") - @item.EndDate.ToString("dd MMM")</td>
+                    <td>@item.EstimatedCost</td>
+                    <td><span class="status @StatusClass(DisplayStatus(item))">@StatusText(DisplayStatus(item))</span></td>
+                    @if (DecisionAction is not null)
+                    {
+                        <td>
+                            @{
+                                var decider = DecidedBy(item);
+                            }
+                            @if (decider is null)
+                            {
+                                <span class="muted">—</span>
+                            }
+                            else
+                            {
+                                <span class="role-pill @(decider.Value.IsCurrentUser ? "decision-you" : "decision-previous")">
+                                    @DecisionVerb by @(decider.Value.IsCurrentUser ? "you" : decider.Value.Name)
+                                </span>
+                            }
+                        </td>
+                    }
+                    <td>@if (ShowViewLink) {
+                        <a class="table-link" href="@RequestHref(item.Id)">View request</a>
+                    } else
+                    {
+
+                        <span class="muted">—</span>
+                    }
+                </td>
+                @if (HasActions)
+                {
+                    <td class="table-actions">
+                        @if (OnEdit is not null && item.Status == TravelRequestStatus.Draft)
+                        {
+                            <button @onclick="(() => OnEdit(item.Id))">Edit</button>
+                        }
+                        @if (OnSubmit is not null && item.Status == TravelRequestStatus.Draft)
+                        {
+                            <button @onclick="(() => OnSubmit(item.Id))">Submit</button>
+                        }
+                        @if (OnExtend is not null && item.Status == TravelRequestStatus.Approved)
+                        {
+                            <button @onclick="(() => OnExtend(item.Id))">Extend</button>
+                        }
+                        @if (OnBook is not null && item.Status == TravelRequestStatus.Approved)
+                        {
+                            <button @onclick="(() => OnBook(item.Id))">Manage bookings</button>
+                        }
+                        @if (OnCancel is not null && item.Status is not TravelRequestStatus.Cancelled and not TravelRequestStatus.Rejected and not TravelRequestStatus.Completed)
+                        {
+                            <button @onclick="(() => OnCancel(item.Id))">Cancel</button>
+                        }
+                        @if (OnApprove is not null)
+                        {
+                            <button disabled="@(busyId is not null)" @onclick="(() => Invoke(item.Id, OnApprove))">@(busyId == item.Id ? "Approving..." : "Approve")</button>
+                        }
+                        @if (OnReject is not null)
+                        {
+                            <button disabled="@(busyId is not null)" @onclick="(() => Invoke(item.Id, OnReject))">@(busyId == item.Id ? "Please wait..." : "Reject")</button>
+                        }
+                    </td>
+                }
+            </tr>
+        }
+    </tbody>
+</table>
+}
+@code {
+   
+    private bool HasActions => OnEdit is not null || OnSubmit is not null || OnExtend is not null
+        || OnBook is not null || OnCancel is not null || OnApprove is not null || OnReject is not null;
+
+    [Parameter] public IReadOnlyList<TravelRequestDto> Items { get; set; } = [];
+    [Parameter] public Func<int, Task>? OnEdit { get; set; }
+    [Parameter] public Func<int, Task>? OnSubmit { get; set; }
+    [Parameter] public Func<int, Task>? OnCancel { get; set; }
+    [Parameter] public Func<int, Task>? OnExtend { get; set; }
+    [Parameter] public Func<int, Task>? OnBook { get; set; }
+    [Parameter] public Func<int, Task>? OnApprove { get; set; }
+    [Parameter] public Func<int, Task>? OnReject { get; set; }
+
+   
+    [Parameter] public bool ShowViewLink { get; set; } = true;
+
+    [Parameter] public bool AdminView { get; set; }
+
+   
+    [Parameter] public string? ViewerRole { get; set; }
+
+    [Parameter] public bool ShowExtensionAsApproved { get; set; }
+
+    
+    [Parameter] public AuditActionType? DecisionAction { get; set; }
+    [Parameter] public int? CurrentUserId { get; set; }
+
+    [Parameter] public string DecisionVerb { get; set; } = "Decided";
+
+   
+    [Parameter] public string DecisionColumnHeader { get; set; } = "Decided By";
+
+    private (string Name, bool IsCurrentUser)? DecidedBy(TravelRequestDto item)
+    {
+        if (DecisionAction is null) return null;
+
+        var entry = item.History.LastOrDefault(h => h.Action == DecisionAction);
+        if (entry is null) return null;
+
+        return (entry.PerformedBy, CurrentUserId is not null && entry.PerformedByUserId == CurrentUserId);
+    }
+
+    private TravelRequestStatus DisplayStatus(TravelRequestDto item) =>
+        ShowExtensionAsApproved && item.Status == TravelRequestStatus.ExtensionRequested
+            ? TravelRequestStatus.Approved
+            : item.Status;
+
+    private int? busyId;
+
+    private async Task Invoke(int id, Func<int, Task> action)
+    {
+        if (busyId == id) return;
+        busyId = id;
+        try { await action(id); }
+        finally { busyId = null; }
+    }
+
+    private string RequestHref(int id) => AdminView
+        ? $"/requests/{id}?admin=true"
+        : !string.IsNullOrEmpty(ViewerRole)
+            ? $"/requests/{id}?role={ViewerRole}"
+            : $"/requests/{id}";
+
+    private static string StatusClass(TravelRequestStatus status) =>
+        $"status-{status.ToString().ToLowerInvariant()}";
+
+    private static string StatusText(TravelRequestStatus status) => status switch
+    {
+        TravelRequestStatus.PendingManager => "Pending manager",
+        TravelRequestStatus.PendingDeptHead => "Pending department head",
+        TravelRequestStatus.ExtensionRequested => "Extension requested",
+        _ => status.ToString()
+    };
+}

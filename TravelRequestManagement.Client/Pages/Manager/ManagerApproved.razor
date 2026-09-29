@@ -1,0 +1,51 @@
+﻿@page "/manager/approved"
+@layout TravelRequestManagement.Client.Layout.TravelLayout
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using TravelManagement.Services.Shared.DTOs
+@using TravelManagement.Services.Shared.Enums
+@inject ITravelApi Api
+@inject AuthState Auth
+
+<PageTitle>Approved - Manager Dashboard</PageTitle>
+
+@if (Auth.Me is null)
+{
+    <p>Loading...</p>
+}
+else if (!Auth.Me.ManagesDepartments)
+{
+    <section><p>You are not currently assigned as Manager of any department.</p></section>
+}
+else
+{
+    <AreaTabs Tabs="ManagerTabs.Items" />
+
+    <section>
+        <h2>Approved</h2>
+        <p class="page-subtitle">
+            Every request approved in your department(s) - including ones approved before you became manager.
+            The <strong>Approved By</strong> column shows whether it was you or a previous manager.
+        </p>
+        <p class="message">@message</p>
+        <RequestTable Items="items" ShowViewLink="true" ViewerRole="manager" ShowExtensionAsApproved="true"
+                      DecisionAction="AuditActionType.ManagerApproved" CurrentUserId="Auth.Me.Id" DecisionVerb="Approved" DecisionColumnHeader="Approved By" />
+    </section>
+}
+
+@code {
+    private string message = "";
+    private IReadOnlyList<TravelRequestDto> items = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Auth.EnsureLoadedAsync()) return;
+        await Run(async () => items = await Api.ManagerHistoryAsync(true));
+    }
+
+    private async Task Run(Func<Task> action)
+    {
+        try { message = ""; await action(); }
+        catch (Exception ex) { message = ApiErrors.Describe(ex); }
+    }
+}
