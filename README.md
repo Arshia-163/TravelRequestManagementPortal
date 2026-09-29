@@ -153,6 +153,4 @@ dotnet ef database update --project TravelManagement.Data --startup-project Trav
 4. Push the branch: `git push origin feature/my-feature`
 5. Open a pull request
 
-## License
 
-Add a license of your choice (for example MIT) as a `LICENSE` file, or remove this section.
